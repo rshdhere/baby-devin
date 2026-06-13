@@ -24,7 +24,9 @@
   "packageManager": "bun@1.2.3",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "tooling/*",
+    "tests/*"
   ],
   "dependencies": {
     "lint-staged": "^17.0.7"
