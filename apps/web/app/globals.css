@@ -5,11 +5,51 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --accent: #3b82f6;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.logo-path {
+  fill: currentColor;
+}
+
+.hero-capsule {
+  transform: scale(1);
+  transition:
+    transform 0.35s ease-out,
+    background-color 0.2s ease;
+}
+
+.hero-capsule:hover {
+  transform: scale(1.06);
+  transition:
+    transform 0.35s ease-in,
+    background-color 0.2s ease;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
   }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
 }
