@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -11,14 +11,35 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { DashboardLogo } from "@/components/dashboard/dashboard-logo";
 import { MotionButton } from "@/components/dashboard/motion-button";
 import { PromptMetadataBar } from "@/components/dashboard/prompt-metadata-bar";
 import { cn } from "@/lib/utils";
 
+const MIN_TEXTAREA_HEIGHT = 72;
+
+const textareaSpring = {
+  type: "spring" as const,
+  stiffness: 420,
+  damping: 32,
+  mass: 0.85,
+};
+
 export function PromptComposer() {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showTerminalBanner, setShowTerminalBanner] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const [textareaHeight, setTextareaHeight] = useState(MIN_TEXTAREA_HEIGHT);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "0px";
+    const nextHeight = Math.max(MIN_TEXTAREA_HEIGHT, textarea.scrollHeight);
+    setTextareaHeight(nextHeight);
+  }, [prompt, showTerminalBanner]);
 
   return (
     <div className="flex w-full flex-col items-center overflow-visible">
@@ -64,13 +85,17 @@ export function PromptComposer() {
           </>
         ) : null}
 
-        <textarea
+        <motion.textarea
+          ref={textareaRef}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="Ask Devin to build features, fix bugs, or work on your code"
-          rows={3}
+          rows={1}
+          initial={false}
+          animate={{ height: textareaHeight }}
+          transition={textareaSpring}
           className={cn(
-            "w-full resize-none bg-transparent px-5 pb-2",
+            "w-full resize-none overflow-hidden bg-transparent px-5 pb-2",
             showTerminalBanner ? "pt-3" : "pt-5",
             "text-[15px] leading-relaxed text-white placeholder:text-gray-500",
             "outline-none",
