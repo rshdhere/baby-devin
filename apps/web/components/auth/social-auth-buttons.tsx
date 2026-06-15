@@ -7,6 +7,7 @@ import {
   WindsurfIcon,
 } from "@/components/auth/auth-icons";
 import { authClient } from "@/lib/auth-client";
+import { getCallbackURL } from "@/lib/auth-config";
 import { cn } from "@/lib/utils";
 
 interface SocialAuthButtonsProps {
@@ -38,7 +39,7 @@ const socialProviders = [
 ];
 
 export function SocialAuthButtons({
-  callbackURL = "/",
+  callbackURL = getCallbackURL("/dashboard"),
 }: SocialAuthButtonsProps) {
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -6,7 +6,7 @@ interface AuthPageShellProps {
   title: string;
   subtitle: string;
   children: ReactNode;
-  footer: ReactNode;
+  footer?: ReactNode;
 }
 
 export function AuthPageShell({
@@ -31,9 +31,11 @@ export function AuthPageShell({
 
         {children}
 
-        <div className="mt-8 text-center text-[14px] text-gray-500">
-          {footer}
-        </div>
+        {footer ? (
+          <div className="mt-8 text-center text-[14px] text-gray-500">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

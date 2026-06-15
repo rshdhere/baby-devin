@@ -66,7 +66,7 @@ export function Header() {
             Download
           </Link>
           <Link
-            href="/signup"
+            href="/login"
             className={cn(
               "rounded-full bg-blue-500 px-4 py-2 text-[15px] font-medium text-white",
               "transition-colors hover:bg-blue-600",

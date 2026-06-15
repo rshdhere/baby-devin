@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { AuthDivider } from "@/components/auth/auth-divider";
 import { SocialAuthButtons } from "@/components/auth/social-auth-buttons";
 import { authClient } from "@/lib/auth-client";
+import { getCallbackURL } from "@/lib/auth-config";
 import { cn } from "@/lib/utils";
 
 export function LoginForm() {
@@ -19,7 +20,7 @@ export function LoginForm() {
 
     const { error: signInError } = await authClient.signIn.magicLink({
       email,
-      callbackURL: "/",
+      callbackURL: getCallbackURL("/dashboard"),
     });
 
     setIsSubmitting(false);
@@ -39,7 +40,7 @@ export function LoginForm() {
         <p className="mt-2 text-[14px] leading-relaxed text-gray-500">
           We sent a sign-in link to{" "}
           <span className="text-gray-300">{email}</span>. Click the link to
-          continue.
+          continue to Devin.
         </p>
       </div>
     );
@@ -47,7 +48,7 @@ export function LoginForm() {
 
   return (
     <>
-      <SocialAuthButtons callbackURL="/" />
+      <SocialAuthButtons callbackURL={getCallbackURL("/dashboard")} />
 
       <AuthDivider />
 

@@ -1,8 +1,10 @@
 import { db } from "@devin/drizzle";
 import { schema } from "@devin/drizzle/schema";
+import { sendMagicLinkEmail, sendVerificationEmail } from "@devin/email";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, magicLink } from "better-auth/plugins";
+import { deliverVerificationEmail } from "./verification-email.js";
 
 const githubClientId = process.env.GITHUB_CLIENT_ID;
 const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
@@ -51,12 +53,29 @@ export const auth = betterAuth({
   ],
   emailAndPassword: {
     enabled: true,
+    requireEmailVerification: true,
+    autoSignIn: false,
+    onExistingUserSignUp: async ({ user }) => {
+      if (user.emailVerified) {
+        return;
+      }
+
+      await deliverVerificationEmail(user.email);
+    },
+  },
+  emailVerification: {
+    sendOnSignUp: true,
+    autoSignInAfterVerification: true,
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendVerificationEmail({ to: user.email, url });
+    },
   },
   socialProviders,
   plugins: [
     magicLink({
+      disableSignUp: true,
       sendMagicLink: async ({ email, url }) => {
-        console.log(`[auth] magic link for ${email}: ${url}`);
+        await sendMagicLinkEmail({ to: email, url });
       },
     }),
     ...(oauthProviders.length > 0

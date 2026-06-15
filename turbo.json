@@ -1,6 +1,13 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
-  "globalEnv": ["DATABASE_URL"],
+  "globalEnv": [
+    "DATABASE_URL",
+    "RESEND_API_KEY",
+    "RESEND_FROM_EMAIL",
+    "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_URL",
+    "WEB_APP_URL"
+  ],
   "ui": "tui",
   "tasks": {
     "test": {

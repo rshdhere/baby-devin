@@ -3,8 +3,13 @@ import {
   genericOAuthClient,
   magicLinkClient,
 } from "better-auth/client/plugins";
+import { authConfig } from "@/lib/auth-config";
 
 export const authClient = createAuthClient({
-  basePath: "/api/v1/auth",
+  baseURL: authConfig.baseURL,
+  basePath: authConfig.basePath,
+  fetchOptions: {
+    credentials: "include",
+  },
   plugins: [magicLinkClient(), genericOAuthClient()],
 });

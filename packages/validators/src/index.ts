@@ -30,3 +30,20 @@ export const authSchema = {
     password,
   }),
 };
+
+export const dashboardSettingsSchema = {
+  update: z.object({
+    repositoryLabel: z
+      .string()
+      .min(1, { message: "repository label is required" })
+      .max(64),
+    environment: z
+      .string()
+      .min(1, { message: "environment is required" })
+      .max(32),
+  }),
+};
+
+export type DashboardSettingsUpdate = z.infer<
+  typeof dashboardSettingsSchema.update
+>;

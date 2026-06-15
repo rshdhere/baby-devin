@@ -13,6 +13,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@devin/email": "workspace:*",
     "@devin/validators": "workspace:*",
     "@devin/drizzle": "workspace:*",
     "@types/express": "^5.0.6",

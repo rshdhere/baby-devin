@@ -73,9 +73,25 @@ export const verification = pgTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const userRelations = relations(user, ({ many }) => ({
+export const userDashboardSettings = pgTable("user_dashboard_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  repositoryLabel: text("repository_label")
+    .default("99+ repositories")
+    .notNull(),
+  environment: text("environment").default("Ubuntu").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+export const userRelations = relations(user, ({ many, one }) => ({
   sessions: many(session),
   accounts: many(account),
+  dashboardSettings: one(userDashboardSettings),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -92,12 +108,24 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
+export const userDashboardSettingsRelations = relations(
+  userDashboardSettings,
+  ({ one }) => ({
+    user: one(user, {
+      fields: [userDashboardSettings.userId],
+      references: [user.id],
+    }),
+  }),
+);
+
 export const schema = {
   user,
   session,
   account,
   verification,
+  userDashboardSettings,
   userRelations,
   sessionRelations,
   accountRelations,
+  userDashboardSettingsRelations,
 };

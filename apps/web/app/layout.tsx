@@ -10,18 +10,21 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Devin — The AI Software Engineer",
+  title: "Devin | The AI Software Engineer",
   description:
     "Devin is an AI software engineer that helps you plan, code, review, and ship faster.",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={inter.variable}>
       <body
-        className={`${inter.className} bg-background text-foreground antialiased`}
+        className={`${inter.className} bg-background text-foreground min-h-screen antialiased`}
       >
-        <main>{children}</main>
+        {children}
       </body>
     </html>
   );

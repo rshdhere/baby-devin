@@ -17,7 +17,7 @@ export function CtaSection() {
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Link
-                href="/signup"
+                href="/login"
                 className={cn(
                   "rounded-lg bg-blue-500 px-6 py-3 text-[16px] font-medium text-white",
                   "transition-colors hover:bg-blue-600",
