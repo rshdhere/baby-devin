@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { AuthRedirectIfLoggedIn } from "@/components/auth/auth-redirect-if-logged-in";
 import { LoginForm } from "@/components/auth/login-form";
@@ -15,7 +16,9 @@ export default function LoginPage() {
         title="Welcome to Devin"
         subtitle="Enter your email and we'll send you a secure sign-in link"
       >
-        <LoginForm />
+        <Suspense fallback={null}>
+          <LoginForm />
+        </Suspense>
       </AuthPageShell>
     </AuthRedirectIfLoggedIn>
   );

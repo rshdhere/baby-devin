@@ -73,7 +73,6 @@ export const auth = betterAuth({
   socialProviders,
   plugins: [
     magicLink({
-      disableSignUp: true,
       sendMagicLink: async ({ email, url }) => {
         await sendMagicLinkEmail({ to: email, url });
       },

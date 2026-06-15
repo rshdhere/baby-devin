@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { DashboardPage } from "@/components/dashboard/dashboard-page";
+import { LoadingScreen } from "@/components/loading-screen";
 
 export const metadata: Metadata = {
   title: "Sessions — Devin",
@@ -7,5 +9,9 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardRoute() {
-  return <DashboardPage />;
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <DashboardPage />
+    </Suspense>
+  );
 }
