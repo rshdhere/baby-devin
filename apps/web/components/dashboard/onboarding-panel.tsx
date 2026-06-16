@@ -70,7 +70,7 @@ export function OnboardingPanel({ onDismissConfirmed }: OnboardingPanelProps) {
 
   return (
     <>
-      <div className="w-full max-w-[720px] overflow-hidden rounded-xl border border-[#2a2a2a] bg-[#141414]">
+      <div className="w-full max-w-[840px] overflow-hidden rounded-xl border border-[#2a2a2a] bg-[#141414]">
         <div className="flex items-center justify-between border-b border-[#2a2a2a] px-4 py-3">
           <h2 className="text-[14px] font-medium text-white">
             Get started with Devin

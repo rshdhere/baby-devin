@@ -64,7 +64,7 @@ export function AskView() {
   const ActiveIcon = activeMode.icon;
 
   return (
-    <div className="flex w-full max-w-[720px] flex-col items-center">
+    <div className="flex w-full max-w-[840px] flex-col items-center">
       <div className="mb-6 flex justify-center">
         <DashboardLogo size={52} className="text-[#525252]" />
       </div>
@@ -80,7 +80,7 @@ export function AskView() {
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Ask Devin questions about your code"
             rows={3}
-            className="w-full resize-none bg-transparent px-5 pt-5 pb-2 text-[15px] leading-relaxed text-white outline-none placeholder:text-gray-500"
+            className="w-full resize-none bg-transparent px-5 pt-5 pb-2 text-[15px] leading-relaxed text-white outline-none selection:bg-white selection:text-[#1a1a1a] placeholder:text-gray-500"
           />
 
           <div className="flex items-center justify-between px-3 pt-1 pb-3.5">

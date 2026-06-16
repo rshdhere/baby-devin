@@ -25,7 +25,7 @@ function MainContent({ activeNav }: { activeNav: NavId }) {
       );
     case "automations":
       return (
-        <div className="flex w-full flex-1 flex-col pt-4">
+        <div className="flex w-full flex-1 flex-col items-center pt-4">
           <AutomationsView />
         </div>
       );

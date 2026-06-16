@@ -58,25 +58,25 @@ export function PromptComposer() {
             <div className="flex items-center justify-between bg-[#171717] px-4 py-2.5">
               <div className="flex items-center gap-2 text-[13px] text-gray-400">
                 <Terminal className="size-4 shrink-0 text-gray-500" />
-                <span>
-                  Run Devin directly from your terminal.{" "}
-                  <MotionButton
-                    type="button"
-                    className="cursor-pointer text-[#4a90e2] hover:text-[#6aa8ef]"
-                  >
-                    Get started
-                  </MotionButton>
-                </span>
+                <span>Run Devin directly from your terminal.</span>
               </div>
-              <MotionButton
-                type="button"
-                pressStyle="icon"
-                onClick={() => setShowTerminalBanner(false)}
-                className="cursor-pointer rounded-full p-1 text-gray-500 transition-colors hover:bg-[#222] hover:text-gray-300"
-                aria-label="Dismiss banner"
-              >
-                <X className="size-4" />
-              </MotionButton>
+              <div className="flex items-center gap-1">
+                <MotionButton
+                  type="button"
+                  className="cursor-pointer text-[13px] text-[#4a90e2] hover:text-[#6aa8ef]"
+                >
+                  Get started
+                </MotionButton>
+                <MotionButton
+                  type="button"
+                  pressStyle="icon"
+                  onClick={() => setShowTerminalBanner(false)}
+                  className="cursor-pointer rounded-full p-1 text-gray-500 transition-colors hover:bg-[#222] hover:text-gray-300"
+                  aria-label="Dismiss banner"
+                >
+                  <X className="size-4" />
+                </MotionButton>
+              </div>
             </div>
             <div
               aria-hidden
@@ -98,6 +98,7 @@ export function PromptComposer() {
             "w-full resize-none overflow-hidden bg-transparent px-5 pb-2",
             showTerminalBanner ? "pt-3" : "pt-5",
             "text-[15px] leading-relaxed text-white placeholder:text-gray-500",
+            "selection:bg-white selection:text-[#1a1a1a]",
             "outline-none",
           )}
         />

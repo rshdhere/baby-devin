@@ -52,7 +52,7 @@ export function SessionsView() {
         )}
       >
         <div className="flex min-h-0 items-center justify-center">
-          <div className="w-full max-w-[720px]">
+          <div className="w-full max-w-[840px]">
             <PromptComposer />
           </div>
         </div>
@@ -72,7 +72,7 @@ export function SessionsView() {
         >
           <div
             className={cn(
-              "mx-auto w-full max-w-[720px]",
+              "mx-auto w-full max-w-[840px]",
               isDismissed && "pointer-events-none select-none",
             )}
           >

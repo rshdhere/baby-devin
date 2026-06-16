@@ -34,7 +34,7 @@ export function AutomationsView() {
   );
 
   return (
-    <div className="flex w-full max-w-[800px] flex-col">
+    <div className="mx-auto flex w-full max-w-[840px] flex-col">
       <h1 className="mb-6 text-[22px] font-semibold text-white">Automations</h1>
 
       <div className="overflow-hidden rounded-[20px] border border-[#333] bg-[#1a1a1a]">

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LogOut, X } from "lucide-react";
 import { MotionButton } from "@/components/dashboard/motion-button";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,13 @@ export function UserMenu({ userName }: UserMenuProps) {
     width: number;
   } | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [logoutConfirmPending, setLogoutConfirmPending] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setLogoutConfirmPending(false);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -179,14 +186,43 @@ export function UserMenu({ userName }: UserMenuProps) {
                     >
                       Create new organization
                     </MotionButton>
-                    <MotionButton
-                      type="button"
-                      disabled={isSigningOut}
-                      onClick={handleLogout}
-                      className="flex w-full cursor-pointer px-4 py-2.5 text-left text-[14px] text-gray-200 transition-colors hover:bg-[#252525] disabled:cursor-not-allowed disabled:opacity-60"
+                    <div
+                      className={cn(
+                        "flex w-full items-center transition-colors hover:bg-[#252525]",
+                        logoutConfirmPending && "bg-[#252525]/60",
+                      )}
                     >
-                      {isSigningOut ? "Logging out…" : "Log out"}
-                    </MotionButton>
+                      <MotionButton
+                        type="button"
+                        disabled={isSigningOut}
+                        onClick={() => setLogoutConfirmPending(true)}
+                        className="flex flex-1 cursor-pointer px-4 py-2.5 text-left text-[14px] text-gray-200 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isSigningOut ? "Logging out…" : "Log out"}
+                      </MotionButton>
+                      {logoutConfirmPending && !isSigningOut ? (
+                        <div className="flex items-center gap-0.5 pr-2">
+                          <MotionButton
+                            type="button"
+                            pressStyle="icon"
+                            onClick={() => void handleLogout()}
+                            className="cursor-pointer rounded-md p-1.5 text-red-400 transition-colors hover:bg-red-500/15 hover:text-red-300"
+                            aria-label="Confirm log out"
+                          >
+                            <LogOut className="size-4" />
+                          </MotionButton>
+                          <MotionButton
+                            type="button"
+                            pressStyle="icon"
+                            onClick={() => setLogoutConfirmPending(false)}
+                            className="cursor-pointer rounded-md p-1.5 text-gray-500 transition-colors hover:bg-[#333] hover:text-gray-300"
+                            aria-label="Cancel log out"
+                          >
+                            <X className="size-4" />
+                          </MotionButton>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </motion.div>
               ) : null}

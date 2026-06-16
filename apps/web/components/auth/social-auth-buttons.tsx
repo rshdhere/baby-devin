@@ -84,7 +84,7 @@ export function SocialAuthButtons({
             className={cn(
               "flex w-full items-center justify-center gap-3 rounded-md border border-[#333]",
               "bg-[#1e1e1e] px-4 py-3 text-[15px] font-medium text-white",
-              "transition-colors hover:bg-[#252525] disabled:cursor-not-allowed disabled:opacity-60",
+              "cursor-pointer transition-colors hover:bg-[#252525] disabled:cursor-not-allowed disabled:opacity-60",
             )}
           >
             <Icon />
