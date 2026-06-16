@@ -14,7 +14,7 @@ node_modules
 .github
 
 # Build outputs (rebuilt in image or not used)
-.next
+**/.next
 out
 build
 dist
@@ -28,6 +28,9 @@ dist
 
 # Testing and debug
 coverage
+tests
+**/playwright-report
+**/test-results
 *.log
 *.pem
 

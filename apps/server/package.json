@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "npx tsx watch src/bin.ts"
+    "dev": "npx tsx watch src/bin.ts",
+    "start": "bun src/bin.ts"
   },
   "dependencies": {
     "@devin/api-v1": "workspace:*",
