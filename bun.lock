@@ -110,7 +110,7 @@
         "typescript": "^5",
       },
     },
-    "packages/email": {
+    "packages/services/email": {
       "name": "@devin/email",
       "dependencies": {
         "resend": "^6.12.4",
@@ -230,7 +230,7 @@
 
     "@devin/drizzle": ["@devin/drizzle@workspace:packages/drizzle"],
 
-    "@devin/email": ["@devin/email@workspace:packages/email"],
+    "@devin/email": ["@devin/email@workspace:packages/services/email"],
 
     "@devin/eslint-config": ["@devin/eslint-config@workspace:tooling/eslint-config"],
 

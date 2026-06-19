@@ -16,7 +16,7 @@ Devin follows a cloud-native architecture. A Next.js dashboard talks to an API g
 | --- | --- | --- |
 | **Dashboard** | User-facing workspace for sessions, prompts, and agent activity | `apps/web` (Next.js) |
 | **Better Auth** | Session management, magic links, and OAuth | `packages/api/v1` |
-| **Resend** | Email delivery for verification and magic links | `packages/email` |
+| **Resend** | Email delivery for verification and magic links | `packages/services/email` |
 
 #### API Gateway
 
