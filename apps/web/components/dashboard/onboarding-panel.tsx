@@ -16,38 +16,12 @@ interface ChecklistItem {
 }
 
 interface OnboardingPanelProps {
+  githubConnected?: boolean;
+  hasRepoAccess?: boolean;
+  hasRepository?: boolean;
+  sessionCount?: number;
   onDismissConfirmed?: () => void;
 }
-
-const checklistItems: ChecklistItem[] = [
-  { id: "git", label: "Connect to Git", completed: true, current: false },
-  {
-    id: "repos",
-    label: "Select repositories",
-    completed: true,
-    current: false,
-    badge: "Earned $10",
-  },
-  {
-    id: "session",
-    label: "Make your first session",
-    completed: false,
-    current: true,
-  },
-  {
-    id: "review",
-    label: "Validate in Devin Review",
-    completed: false,
-    current: false,
-  },
-  { id: "wiki", label: "Set up your wiki", completed: false, current: false },
-  {
-    id: "ask",
-    label: "Ask Devin about your codebase",
-    completed: false,
-    current: false,
-  },
-];
 
 const advancedItems = [
   { id: "integration", label: "Connect an integration" },
@@ -56,10 +30,56 @@ const advancedItems = [
   { id: "capabilities", label: "Explore advanced capabilities" },
 ];
 
-export function OnboardingPanel({ onDismissConfirmed }: OnboardingPanelProps) {
+export function OnboardingPanel({
+  githubConnected = false,
+  hasRepoAccess = false,
+  hasRepository = false,
+  sessionCount = 0,
+  onDismissConfirmed,
+}: OnboardingPanelProps) {
   const [showDismissModal, setShowDismissModal] = useState(false);
   const [showAdvancedTips, setShowAdvancedTips] = useState(true);
-  const completedCount = 2;
+
+  const checklistItems: ChecklistItem[] = [
+    {
+      id: "git",
+      label: "Connect to Git",
+      completed: githubConnected,
+      current: !githubConnected,
+    },
+    {
+      id: "repos",
+      label: "Select repositories",
+      completed: hasRepoAccess && hasRepository,
+      current: githubConnected && (!hasRepoAccess || !hasRepository),
+      badge: hasRepoAccess && hasRepository ? "Earned $10" : undefined,
+    },
+    {
+      id: "session",
+      label: "Make your first session",
+      completed: sessionCount > 0,
+      current:
+        githubConnected && hasRepoAccess && hasRepository && sessionCount === 0,
+    },
+    {
+      id: "review",
+      label: "Validate in Devin Review",
+      completed: false,
+      current: sessionCount > 0,
+    },
+    { id: "wiki", label: "Set up your wiki", completed: false, current: false },
+    {
+      id: "ask",
+      label: "Ask Devin about your codebase",
+      completed: false,
+      current: false,
+    },
+  ];
+
+  const completedCount =
+    (githubConnected ? 1 : 0) +
+    (hasRepoAccess && hasRepository ? 1 : 0) +
+    (sessionCount > 0 ? 1 : 0);
   const totalCount = 10;
   const progress = (completedCount / totalCount) * 100;
 

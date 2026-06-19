@@ -11,6 +11,8 @@ export type TaskEventType =
   | "agent.failed"
   | "git.clone"
   | "git.commit"
+  | "git.push"
+  | "git.pr"
   | "tests.running"
   | "task.completed"
   | "task.failed";

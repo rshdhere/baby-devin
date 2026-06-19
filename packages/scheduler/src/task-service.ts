@@ -51,11 +51,17 @@ export class TaskService {
   createTask(input: CreateTaskInput): Task {
     const now = new Date().toISOString();
     const agent = input.agent ?? this.defaultAgent;
+    const title =
+      input.prompt.trim().slice(0, 80) +
+      (input.prompt.trim().length > 80 ? "…" : "");
     const task: Task = {
       id: crypto.randomUUID(),
       prompt: input.prompt.trim(),
       agent,
       status: "queued",
+      userId: input.userId,
+      repository: input.repository,
+      title,
       createdAt: now,
       updatedAt: now,
     };
@@ -65,13 +71,21 @@ export class TaskService {
     }
 
     this.tasks.set(task.id, task);
-    this.emit("task.created", task.id, "Task accepted", { agent: task.agent });
+    this.emit("task.created", task.id, "Task accepted", {
+      agent: task.agent,
+      repository: task.repository,
+    });
 
     void this.queue
       .enqueue({
         taskId: task.id,
         prompt: task.prompt,
         agent: task.agent,
+        userId: input.userId,
+        repository: input.repository,
+        cloneUrl: input.cloneUrl,
+        githubToken: input.githubToken,
+        permissions: input.permissions,
         enqueuedAt: now,
       })
       .catch((error) => {
@@ -168,17 +182,33 @@ export class TaskService {
         runtimeURL: runtimeBaseUrl,
       });
 
+      const repoCwd = "repo";
+      let agentPrompt = task.prompt;
+
+      if (job.cloneUrl && job.repository) {
+        this.emit("git.clone", task.id, `Cloning ${job.repository}`, {
+          repository: job.repository,
+        });
+        await runtime.gitClone({
+          taskId: task.id,
+          url: job.cloneUrl,
+          path: repoCwd,
+        });
+        agentPrompt = `Repository ${job.repository} is cloned at /workspace/${repoCwd}. Work in that directory.\n\n${task.prompt}`;
+      }
+
       const stopEvents = this.forwardRuntimeEvents(runtimeBaseUrl, task.id);
 
       this.updateTask(task.id, "running", `${task.agent} agent executing task`);
       this.emit("agent.running", task.id, `${task.agent} agent started`, {
         prompt: task.prompt,
         agent: task.agent,
+        repository: job.repository,
       });
 
       const runResult = await runtime.run({
         taskId: task.id,
-        prompt: task.prompt,
+        prompt: agentPrompt,
         agent: task.agent,
       });
 
@@ -186,6 +216,10 @@ export class TaskService {
 
       if (runResult.status === "failed") {
         throw new Error(runResult.message);
+      }
+
+      if (job.repository && job.permissions) {
+        await this.finalizeGitWork(runtime, task, job, repoCwd);
       }
 
       this.updateTask(
@@ -196,6 +230,8 @@ export class TaskService {
       this.emit("task.completed", task.id, "Task completed", {
         output: runResult.output,
         agent: runResult.agent ?? task.agent,
+        prUrl: task.prUrl,
+        branch: task.branch,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Task failed";
@@ -280,6 +316,156 @@ export class TaskService {
     }
   }
 
+  private async finalizeGitWork(
+    runtime: RuntimeClient,
+    task: Task,
+    job: ScheduleJob,
+    repoCwd: string,
+  ): Promise<void> {
+    const permissions = job.permissions;
+    if (!permissions || !job.repository) {
+      return;
+    }
+
+    const branchName = `devin/${task.id.slice(0, 8)}`;
+    task.branch = branchName;
+
+    const status = await runtime.terminal({
+      taskId: task.id,
+      command: "git status --porcelain",
+      cwd: repoCwd,
+    });
+
+    if (!status.stdout.trim()) {
+      return;
+    }
+
+    if (permissions.canPush) {
+      await runtime.terminal({
+        taskId: task.id,
+        command: `git checkout -b ${branchName}`,
+        cwd: repoCwd,
+      });
+    }
+
+    if (permissions.canCommit) {
+      await runtime.gitCommit({
+        taskId: task.id,
+        message: `devin: ${task.title ?? "agent changes"}`,
+        paths: ["."],
+        cwd: repoCwd,
+      });
+    }
+
+    if (!permissions.canPush) {
+      return;
+    }
+
+    const pushResult = await runtime.gitPush({
+      taskId: task.id,
+      branch: branchName,
+      cwd: repoCwd,
+    });
+
+    if (pushResult.status !== "completed") {
+      this.emit("git.push", task.id, "Push skipped or failed", {
+        branch: branchName,
+      });
+      return;
+    }
+
+    this.emit("git.push", task.id, `Pushed branch ${branchName}`, {
+      branch: branchName,
+    });
+
+    if (!permissions.canCreatePr || !job.githubToken) {
+      return;
+    }
+
+    const [owner, repo] = job.repository.split("/");
+    if (!owner || !repo) {
+      return;
+    }
+
+    try {
+      const defaultBranch = await this.fetchDefaultBranch(
+        job.githubToken,
+        owner,
+        repo,
+      );
+      const pr = await this.createGitHubPullRequest(
+        job.githubToken,
+        owner,
+        repo,
+        {
+          title: task.title ?? `Devin: ${task.prompt.slice(0, 60)}`,
+          body: `Automated changes by Devin.\n\n**Prompt:** ${task.prompt}`,
+          head: branchName,
+          base: defaultBranch,
+        },
+      );
+      task.prUrl = pr.html_url;
+      this.emit("git.pr", task.id, `Opened pull request #${pr.number}`, {
+        prUrl: pr.html_url,
+        number: pr.number,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to create pull request";
+      this.emit("git.pr", task.id, message, { error: message });
+    }
+  }
+
+  private async fetchDefaultBranch(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<string> {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      },
+    );
+    if (!response.ok) {
+      return "main";
+    }
+    const data = (await response.json()) as { default_branch?: string };
+    return data.default_branch ?? "main";
+  }
+
+  private async createGitHubPullRequest(
+    token: string,
+    owner: string,
+    repo: string,
+    opts: { title: string; body: string; head: string; base: string },
+  ): Promise<{ html_url: string; number: number }> {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify(opts),
+      },
+    );
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`GitHub PR error ${response.status}: ${body}`);
+    }
+    return response.json() as Promise<{ html_url: string; number: number }>;
+  }
+
   private async deleteSandbox(sandboxName: string): Promise<void> {
     try {
       await fetch(
@@ -351,6 +537,10 @@ export class TaskService {
       | "sandbox.started"
       | "runtime.ready"
       | "agent.running"
+      | "git.clone"
+      | "git.commit"
+      | "git.push"
+      | "git.pr"
       | "task.completed"
       | "task.failed",
     taskId: string,

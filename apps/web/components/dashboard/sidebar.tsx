@@ -20,6 +20,7 @@ import {
   type NavId,
   recentEmptyLabels,
 } from "@/components/dashboard/dashboard-nav";
+import { useSessions } from "@/components/dashboard/sessions-context";
 import { reviewRecentItems } from "@/components/dashboard/views/review-view";
 import { MotionButton } from "@/components/dashboard/motion-button";
 import { UserMenu } from "@/components/dashboard/user-menu";
@@ -40,6 +41,7 @@ const navItems = [
 ];
 
 export function Sidebar({ userName, activeNav, onNavChange }: SidebarProps) {
+  const { tasks, activeTaskId, selectTask } = useSessions();
   return (
     <aside className="flex h-full w-[240px] shrink-0 flex-col border-r border-[#252525] bg-[#111111]">
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
@@ -110,6 +112,10 @@ export function Sidebar({ userName, activeNav, onNavChange }: SidebarProps) {
             <MotionButton
               type="button"
               pressStyle="icon"
+              onClick={() => {
+                onNavChange("sessions");
+                selectTask(null);
+              }}
               className="cursor-pointer rounded-md p-1 text-gray-500 transition-colors hover:bg-[#1a1a1a] hover:text-gray-300"
               aria-label="Create new"
             >
@@ -143,6 +149,36 @@ export function Sidebar({ userName, activeNav, onNavChange }: SidebarProps) {
                 </div>
               </MotionButton>
             ))}
+          </div>
+        ) : activeNav === "sessions" ? (
+          <div className="mt-2 space-y-0.5">
+            {tasks.length === 0 ? (
+              <p className="px-1 text-[13px] text-gray-600">
+                {recentEmptyLabels.sessions}
+              </p>
+            ) : (
+              tasks.slice(0, 12).map((task) => (
+                <MotionButton
+                  key={task.id}
+                  type="button"
+                  onClick={() => selectTask(task.id)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-start gap-2 rounded-md px-1 py-2 text-left transition-colors hover:bg-[#1a1a1a]",
+                    activeTaskId === task.id && "bg-[#1a1a1a]",
+                  )}
+                >
+                  <MessageSquare className="mt-0.5 size-3.5 shrink-0 text-gray-500" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] text-gray-300">
+                      {task.title ?? task.prompt}
+                    </p>
+                    <p className="text-[11px] text-gray-600">
+                      {task.repository ?? task.status}
+                    </p>
+                  </div>
+                </MotionButton>
+              ))
+            )}
           </div>
         ) : (
           <p className="mt-2.5 px-1 text-[13px] text-gray-600">

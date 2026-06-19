@@ -1,9 +1,14 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { GitHubPermissionsPanel } from "@/components/dashboard/github-permissions-panel";
 import { OnboardingPanel } from "@/components/dashboard/onboarding-panel";
 import { PromptComposer } from "@/components/dashboard/prompt-composer";
+import { SessionDetail } from "@/components/dashboard/session-detail";
+import { useSessions } from "@/components/dashboard/sessions-context";
+import { fetchDashboardSettings } from "@/lib/dashboard-settings-api";
+import { fetchGitHubStatus } from "@/lib/github-api";
 import { cn } from "@/lib/utils";
 
 const collapseTransition = {
@@ -26,10 +31,37 @@ const collapseTransition = {
 };
 
 export function SessionsView() {
+  const { activeTask, selectTask, tasks } = useSessions();
   const panelSectionRef = useRef<HTMLDivElement>(null);
   const [panelHeight, setPanelHeight] = useState<number | null>(null);
   const [isCollapsing, setIsCollapsing] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [selectedRepository, setSelectedRepository] = useState<string | null>(
+    null,
+  );
+  const [githubConnected, setGithubConnected] = useState(false);
+  const [hasRepoAccess, setHasRepoAccess] = useState(false);
+  const sessionCount = tasks.length;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([fetchDashboardSettings(), fetchGitHubStatus()])
+      .then(([settings, github]) => {
+        if (!cancelled) {
+          setSelectedRepository(settings.selectedRepository);
+          setGithubConnected(github.connected);
+          setHasRepoAccess(github.hasRepoAccess);
+        }
+      })
+      .catch(() => {
+        // settings load is best-effort for onboarding state
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleDismissConfirmed() {
     const measured = panelSectionRef.current?.offsetHeight ?? 0;
@@ -43,6 +75,14 @@ export function SessionsView() {
     });
   }
 
+  if (activeTask) {
+    return (
+      <div className="flex min-h-0 w-full max-w-[900px] flex-1 flex-col self-center">
+        <SessionDetail task={activeTask} onBack={() => selectTask(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div
@@ -52,8 +92,9 @@ export function SessionsView() {
         )}
       >
         <div className="flex min-h-0 items-center justify-center">
-          <div className="w-full max-w-[840px]">
-            <PromptComposer />
+          <div className="w-full max-w-[840px] space-y-4">
+            <PromptComposer selectedRepository={selectedRepository} />
+            <GitHubPermissionsPanel compact />
           </div>
         </div>
 
@@ -77,6 +118,10 @@ export function SessionsView() {
             )}
           >
             <OnboardingPanel
+              githubConnected={githubConnected}
+              hasRepoAccess={hasRepoAccess}
+              hasRepository={Boolean(selectedRepository)}
+              sessionCount={sessionCount}
               onDismissConfirmed={
                 isDismissed ? undefined : handleDismissConfirmed
               }

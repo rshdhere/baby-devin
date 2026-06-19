@@ -1,8 +1,16 @@
 import { authConfig } from "@/lib/auth-config";
 
+export interface GitHubPermissions {
+  canCommit: boolean;
+  canCreatePr: boolean;
+  canPush: boolean;
+}
+
 export interface DashboardSettings {
   repositoryLabel: string;
+  selectedRepository: string | null;
   environment: string;
+  githubPermissions: GitHubPermissions;
 }
 
 const settingsUrl = `${authConfig.baseURL}/api/v1/settings/dashboard`;
@@ -26,25 +34,47 @@ export async function fetchDashboardSettings() {
   return parseResponse<DashboardSettings>(response);
 }
 
-export async function updateDashboardSettings(data: DashboardSettings) {
+export async function updateDashboardSettings(
+  data: Partial<DashboardSettings> & {
+    githubCanCommit?: boolean;
+    githubCanCreatePr?: boolean;
+    githubCanPush?: boolean;
+  },
+) {
+  const payload: Record<string, unknown> = {};
+  if (data.repositoryLabel !== undefined) {
+    payload.repositoryLabel = data.repositoryLabel;
+  }
+  if (data.selectedRepository !== undefined) {
+    payload.selectedRepository = data.selectedRepository;
+  }
+  if (data.environment !== undefined) {
+    payload.environment = data.environment;
+  }
+  if (data.githubPermissions) {
+    payload.githubCanCommit = data.githubPermissions.canCommit;
+    payload.githubCanCreatePr = data.githubPermissions.canCreatePr;
+    payload.githubCanPush = data.githubPermissions.canPush;
+  }
+  if (data.githubCanCommit !== undefined) {
+    payload.githubCanCommit = data.githubCanCommit;
+  }
+  if (data.githubCanCreatePr !== undefined) {
+    payload.githubCanCreatePr = data.githubCanCreatePr;
+  }
+  if (data.githubCanPush !== undefined) {
+    payload.githubCanPush = data.githubCanPush;
+  }
+
   const response = await fetch(settingsUrl, {
     method: "PATCH",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 
   return parseResponse<DashboardSettings>(response);
 }
-
-export const repositoryOptions = [
-  "No repositories",
-  "1 repository",
-  "5 repositories",
-  "10 repositories",
-  "25 repositories",
-  "99+ repositories",
-] as const;
 
 export const environmentOptions = [
   "Ubuntu",

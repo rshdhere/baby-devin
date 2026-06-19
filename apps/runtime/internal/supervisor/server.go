@@ -40,6 +40,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /terminal", s.handleTerminal)
 	mux.HandleFunc("POST /git/clone", s.handleGitClone)
 	mux.HandleFunc("POST /git/commit", s.handleGitCommit)
+	mux.HandleFunc("POST /git/push", s.handleGitPush)
 	mux.HandleFunc("POST /files/write", s.handleFilesWrite)
 	mux.HandleFunc("POST /browser/open", s.handleBrowserOpen)
 	mux.HandleFunc("GET /events", s.handleEvents)
@@ -186,6 +187,7 @@ type gitCommitRequest struct {
 	TaskID  string   `json:"taskId,omitempty"`
 	Message string   `json:"message"`
 	Paths   []string `json:"paths"`
+	CWD     string   `json:"cwd,omitempty"`
 }
 
 func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +197,7 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cwd := s.resolveCWD(req.CWD)
 	addPaths := "."
 	if len(req.Paths) > 0 {
 		addPaths = strings.Join(req.Paths, " ")
@@ -206,7 +209,7 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 	)
 	s.appendLog("git commit: " + req.Message)
 
-	result, err := executil.Run(r.Context(), s.workspace, command, []string{
+	result, err := executil.Run(r.Context(), cwd, command, []string{
 		"GIT_AUTHOR_NAME=devin-agent",
 		"GIT_AUTHOR_EMAIL=agent@devin.baby",
 		"GIT_COMMITTER_NAME=devin-agent",
@@ -231,6 +234,53 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 		"status":  "completed",
 		"message": req.Message,
 		"output":  executil.CombinedOutput(result),
+	})
+}
+
+type gitPushRequest struct {
+	TaskID string `json:"taskId,omitempty"`
+	Remote string `json:"remote,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	CWD    string `json:"cwd,omitempty"`
+}
+
+func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
+	var req gitPushRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	cwd := s.resolveCWD(req.CWD)
+	remote := firstNonEmpty(req.Remote, "origin")
+	branch := strings.TrimSpace(req.Branch)
+	command := fmt.Sprintf("git push -u %s HEAD", shellQuote(remote))
+	if branch != "" {
+		command = fmt.Sprintf("git push -u %s %s", shellQuote(remote), shellQuote(branch))
+	}
+	s.appendLog("git push: " + command)
+
+	result, err := executil.Run(r.Context(), cwd, command, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.ExitCode != 0 {
+		writeError(w, http.StatusUnprocessableEntity, executil.CombinedOutput(result))
+		return
+	}
+
+	if req.TaskID != "" {
+		s.eventBus.Publish(req.TaskID, "git.push", "changes pushed", map[string]any{
+			"remote": remote,
+			"branch": branch,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "completed",
+		"branch": branch,
+		"output": executil.CombinedOutput(result),
 	})
 }
 

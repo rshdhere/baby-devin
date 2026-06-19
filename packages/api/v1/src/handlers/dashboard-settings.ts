@@ -8,8 +8,12 @@ import { requireAuth } from "../middleware/require-auth.js";
 export const dashboardSettingsRouter = Router();
 
 const defaultSettings = {
-  repositoryLabel: "99+ repositories",
+  repositoryLabel: "No repository selected",
   environment: "Ubuntu",
+  selectedRepository: null as string | null,
+  githubCanCommit: true,
+  githubCanCreatePr: true,
+  githubCanPush: true,
 } as const;
 
 async function getOrCreateSettings(userId: string) {
@@ -29,10 +33,28 @@ async function getOrCreateSettings(userId: string) {
       userId,
       repositoryLabel: defaultSettings.repositoryLabel,
       environment: defaultSettings.environment,
+      githubCanCommit: defaultSettings.githubCanCommit,
+      githubCanCreatePr: defaultSettings.githubCanCreatePr,
+      githubCanPush: defaultSettings.githubCanPush,
     })
     .returning();
 
   return created!;
+}
+
+function serializeSettings(
+  settings: Awaited<ReturnType<typeof getOrCreateSettings>>,
+) {
+  return {
+    repositoryLabel: settings.repositoryLabel,
+    selectedRepository: settings.selectedRepository,
+    environment: settings.environment,
+    githubPermissions: {
+      canCommit: settings.githubCanCommit,
+      canCreatePr: settings.githubCanCreatePr,
+      canPush: settings.githubCanPush,
+    },
+  };
 }
 
 export async function getDashboardSettingsHandler(req: Request, res: Response) {
@@ -44,11 +66,7 @@ export async function getDashboardSettingsHandler(req: Request, res: Response) {
   }
 
   const settings = await getOrCreateSettings(userId);
-
-  res.status(200).json({
-    repositoryLabel: settings.repositoryLabel,
-    environment: settings.environment,
-  });
+  res.status(200).json(serializeSettings(settings));
 }
 
 export async function updateDashboardSettingsHandler(
@@ -74,16 +92,37 @@ export async function updateDashboardSettingsHandler(
 
   await getOrCreateSettings(userId);
 
+  const updateData: Record<string, unknown> = {};
+  if (parsed.data.repositoryLabel !== undefined) {
+    updateData.repositoryLabel = parsed.data.repositoryLabel;
+  }
+  if (parsed.data.selectedRepository !== undefined) {
+    updateData.selectedRepository = parsed.data.selectedRepository;
+    if (parsed.data.repositoryLabel === undefined) {
+      updateData.repositoryLabel =
+        parsed.data.selectedRepository ?? "No repository selected";
+    }
+  }
+  if (parsed.data.environment !== undefined) {
+    updateData.environment = parsed.data.environment;
+  }
+  if (parsed.data.githubCanCommit !== undefined) {
+    updateData.githubCanCommit = parsed.data.githubCanCommit;
+  }
+  if (parsed.data.githubCanCreatePr !== undefined) {
+    updateData.githubCanCreatePr = parsed.data.githubCanCreatePr;
+  }
+  if (parsed.data.githubCanPush !== undefined) {
+    updateData.githubCanPush = parsed.data.githubCanPush;
+  }
+
   const [updated] = await db
     .update(userDashboardSettings)
-    .set(parsed.data)
+    .set(updateData)
     .where(eq(userDashboardSettings.userId, userId))
     .returning();
 
-  res.status(200).json({
-    repositoryLabel: updated!.repositoryLabel,
-    environment: updated!.environment,
-  });
+  res.status(200).json(serializeSettings(updated!));
 }
 
 dashboardSettingsRouter.get(

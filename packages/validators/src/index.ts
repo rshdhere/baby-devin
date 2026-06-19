@@ -36,14 +36,47 @@ export const dashboardSettingsSchema = {
     repositoryLabel: z
       .string()
       .min(1, { message: "repository label is required" })
-      .max(64),
+      .max(64)
+      .optional(),
+    selectedRepository: z
+      .string()
+      .regex(/^[\w.-]+\/[\w.-]+$/, { message: "invalid repository format" })
+      .nullable()
+      .optional(),
     environment: z
       .string()
       .min(1, { message: "environment is required" })
-      .max(32),
+      .max(32)
+      .optional(),
+    githubCanCommit: z.boolean().optional(),
+    githubCanCreatePr: z.boolean().optional(),
+    githubCanPush: z.boolean().optional(),
   }),
 };
+
+export const githubPermissionsSchema = {
+  update: z.object({
+    canCommit: z.boolean(),
+    canCreatePr: z.boolean(),
+    canPush: z.boolean(),
+  }),
+};
+
+export const createTaskSchema = z.object({
+  prompt: z.string().min(1).max(8000),
+  agent: z.enum(["cursor", "claude", "mock"]).optional(),
+  repository: z
+    .string()
+    .regex(/^[\w.-]+\/[\w.-]+$/)
+    .optional(),
+});
 
 export type DashboardSettingsUpdate = z.infer<
   typeof dashboardSettingsSchema.update
 >;
+
+export type GitHubPermissionsUpdate = z.infer<
+  typeof githubPermissionsSchema.update
+>;
+
+export type CreateTaskInput = z.infer<typeof createTaskSchema>;

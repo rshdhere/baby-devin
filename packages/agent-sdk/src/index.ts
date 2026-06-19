@@ -35,6 +35,14 @@ export interface GitCommitRequest {
   taskId?: string;
   message: string;
   paths?: string[];
+  cwd?: string;
+}
+
+export interface GitPushRequest {
+  taskId?: string;
+  remote?: string;
+  branch?: string;
+  cwd?: string;
 }
 
 export interface FileWriteRequest {
@@ -116,6 +124,21 @@ export class RuntimeClient {
     return response.json() as Promise<{
       status: string;
       message: string;
+      output?: string;
+    }>;
+  }
+
+  async gitPush(
+    body: GitPushRequest,
+  ): Promise<{ status: string; branch?: string; output?: string }> {
+    const response = await fetch(this.base("/git/push"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return response.json() as Promise<{
+      status: string;
+      branch?: string;
       output?: string;
     }>;
   }

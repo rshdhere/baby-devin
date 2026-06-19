@@ -22,6 +22,7 @@ if (githubClientId && githubClientSecret) {
   socialProviders.github = {
     clientId: githubClientId,
     clientSecret: githubClientSecret,
+    scope: ["read:user", "user:email", "repo"],
   };
 }
 

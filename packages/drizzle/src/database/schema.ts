@@ -78,9 +78,13 @@ export const userDashboardSettings = pgTable("user_dashboard_settings", {
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
   repositoryLabel: text("repository_label")
-    .default("99+ repositories")
+    .default("No repository selected")
     .notNull(),
+  selectedRepository: text("selected_repository"),
   environment: text("environment").default("Ubuntu").notNull(),
+  githubCanCommit: boolean("github_can_commit").default(true).notNull(),
+  githubCanCreatePr: boolean("github_can_create_pr").default(true).notNull(),
+  githubCanPush: boolean("github_can_push").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

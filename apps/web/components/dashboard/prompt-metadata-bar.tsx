@@ -2,13 +2,18 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, GitBranch, Sparkles } from "lucide-react";
+import { ChevronDown, GitBranch, Loader2, Sparkles } from "lucide-react";
 import {
   environmentOptions,
   fetchDashboardSettings,
-  repositoryOptions,
   updateDashboardSettings,
 } from "@/lib/dashboard-settings-api";
+import {
+  fetchGitHubRepos,
+  fetchGitHubStatus,
+  selectGitHubRepository,
+  type GitHubRepo,
+} from "@/lib/github-api";
 import { MotionButton } from "@/components/dashboard/motion-button";
 import { cn } from "@/lib/utils";
 
@@ -82,13 +87,20 @@ function MetadataMenu({
 }
 
 export function PromptMetadataBar() {
-  const [repositoryLabel, setRepositoryLabel] = useState("99+ repositories");
+  const [repositoryLabel, setRepositoryLabel] = useState(
+    "No repository selected",
+  );
+  const [selectedRepository, setSelectedRepository] = useState<string | null>(
+    null,
+  );
   const [environment, setEnvironment] = useState("Ubuntu");
+  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [githubConnected, setGithubConnected] = useState(false);
   const [openMenu, setOpenMenu] = useState<MenuKind>(null);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
-  const [customRepository, setCustomRepository] = useState("");
   const [customEnvironment, setCustomEnvironment] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const repositoryTriggerRef = useRef<HTMLButtonElement>(null);
   const environmentTriggerRef = useRef<HTMLButtonElement>(null);
@@ -96,13 +108,14 @@ export function PromptMetadataBar() {
   useEffect(() => {
     let cancelled = false;
 
-    fetchDashboardSettings()
-      .then((settings) => {
+    Promise.all([fetchDashboardSettings(), fetchGitHubStatus()])
+      .then(([settings, github]) => {
         if (!cancelled) {
           setRepositoryLabel(settings.repositoryLabel);
+          setSelectedRepository(settings.selectedRepository);
           setEnvironment(settings.environment);
-          setCustomRepository(settings.repositoryLabel);
           setCustomEnvironment(settings.environment);
+          setGithubConnected(github.connected);
         }
       })
       .catch(() => {
@@ -116,6 +129,36 @@ export function PromptMetadataBar() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!githubConnected || openMenu !== "repositories") {
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingRepos(true);
+
+    fetchGitHubRepos()
+      .then((next) => {
+        if (!cancelled) {
+          setRepos(next);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Could not load GitHub repositories");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingRepos(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [githubConnected, openMenu]);
+
   function openMenuAt(kind: MenuKind, trigger: HTMLButtonElement | null) {
     if (!trigger) {
       return;
@@ -125,7 +168,7 @@ export function PromptMetadataBar() {
     setMenuPosition({
       top: rect.bottom + 8,
       left: rect.left,
-      width: Math.max(rect.width, kind === "repositories" ? 200 : 180),
+      width: Math.max(rect.width, kind === "repositories" ? 280 : 180),
     });
     setOpenMenu(kind);
     setError(null);
@@ -144,18 +187,13 @@ export function PromptMetadataBar() {
     openMenuAt(kind, trigger);
   }
 
-  async function persist(next: {
-    repositoryLabel: string;
-    environment: string;
-  }) {
+  async function persistEnvironment(value: string) {
     setIsSaving(true);
     setError(null);
 
     try {
-      const saved = await updateDashboardSettings(next);
-      setRepositoryLabel(saved.repositoryLabel);
+      const saved = await updateDashboardSettings({ environment: value });
       setEnvironment(saved.environment);
-      setCustomRepository(saved.repositoryLabel);
       setCustomEnvironment(saved.environment);
       setOpenMenu(null);
       setMenuPosition(null);
@@ -166,20 +204,21 @@ export function PromptMetadataBar() {
     }
   }
 
-  function selectRepository(label: string) {
-    void persist({ repositoryLabel: label, environment });
-  }
+  async function selectRepository(fullName: string | null) {
+    setIsSaving(true);
+    setError(null);
 
-  function selectEnvironment(value: string) {
-    void persist({ repositoryLabel, environment: value });
-  }
-
-  function saveCustomRepository() {
-    const value = customRepository.trim();
-    if (!value) {
-      return;
+    try {
+      const saved = await selectGitHubRepository(fullName);
+      setRepositoryLabel(saved.repositoryLabel);
+      setSelectedRepository(saved.selectedRepository);
+      setOpenMenu(null);
+      setMenuPosition(null);
+    } catch {
+      setError("Failed to select repository");
+    } finally {
+      setIsSaving(false);
     }
-    void persist({ repositoryLabel: value, environment });
   }
 
   function saveCustomEnvironment() {
@@ -187,7 +226,7 @@ export function PromptMetadataBar() {
     if (!value) {
       return;
     }
-    void persist({ repositoryLabel, environment: value });
+    void persistEnvironment(value);
   }
 
   return (
@@ -259,44 +298,53 @@ export function PromptMetadataBar() {
           setMenuPosition(null);
         }}
       >
-        {repositoryOptions.map((option) => (
+        {!githubConnected ? (
+          <p className="px-3 py-3 text-[13px] text-gray-500">
+            Connect GitHub to select a repository
+          </p>
+        ) : isLoadingRepos ? (
+          <div className="flex items-center gap-2 px-3 py-3 text-[13px] text-gray-500">
+            <Loader2 className="size-4 animate-spin" />
+            Loading repositories…
+          </div>
+        ) : repos.length === 0 ? (
+          <p className="px-3 py-3 text-[13px] text-gray-500">
+            No repositories found. Grant repo access in GitHub permissions.
+          </p>
+        ) : (
+          <div className="max-h-[280px] overflow-y-auto">
+            {repos.map((repo) => (
+              <MotionButton
+                key={repo.id}
+                type="button"
+                disabled={isSaving}
+                onClick={() => selectRepository(repo.fullName)}
+                className={cn(
+                  "flex w-full cursor-pointer flex-col px-3 py-2 text-left transition-colors hover:bg-[#252525] disabled:cursor-not-allowed",
+                  selectedRepository === repo.fullName
+                    ? "text-white"
+                    : "text-gray-400",
+                )}
+              >
+                <span className="text-[13px]">{repo.fullName}</span>
+                {repo.description ? (
+                  <span className="truncate text-[11px] text-gray-600">
+                    {repo.description}
+                  </span>
+                ) : null}
+              </MotionButton>
+            ))}
+          </div>
+        )}
+        <div className="border-t border-[#2a2a2a] p-2">
           <MotionButton
-            key={option}
             type="button"
             disabled={isSaving}
-            onClick={() => selectRepository(option)}
-            className={cn(
-              "flex w-full cursor-pointer px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#252525] disabled:cursor-not-allowed",
-              repositoryLabel === option ? "text-white" : "text-gray-400",
-            )}
+            onClick={() => selectRepository(null)}
+            className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-[12px] text-gray-500 transition-colors hover:bg-[#252525] hover:text-gray-300 disabled:cursor-not-allowed"
           >
-            {option}
+            Clear selection
           </MotionButton>
-        ))}
-        <div className="border-t border-[#2a2a2a] p-2">
-          <p className="mb-1.5 px-1 text-[11px] text-gray-500">Custom label</p>
-          <div className="flex gap-2">
-            <input
-              value={customRepository}
-              onChange={(event) => setCustomRepository(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  saveCustomRepository();
-                }
-              }}
-              className="min-w-0 flex-1 rounded-md border border-[#333] bg-[#141414] px-2 py-1.5 text-[13px] text-white outline-none focus:border-[#555]"
-              placeholder="e.g. 12 repositories"
-            />
-            <MotionButton
-              type="button"
-              pressStyle="primary"
-              disabled={isSaving || !customRepository.trim()}
-              onClick={saveCustomRepository}
-              className="cursor-pointer rounded-md bg-[#333] px-2.5 py-1.5 text-[12px] text-white transition-colors hover:bg-[#444] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Save
-            </MotionButton>
-          </div>
         </div>
       </MetadataMenu>
 
@@ -313,7 +361,7 @@ export function PromptMetadataBar() {
             key={option}
             type="button"
             disabled={isSaving}
-            onClick={() => selectEnvironment(option)}
+            onClick={() => persistEnvironment(option)}
             className={cn(
               "flex w-full cursor-pointer px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#252525] disabled:cursor-not-allowed",
               environment === option ? "text-white" : "text-gray-400",
