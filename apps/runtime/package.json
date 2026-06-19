@@ -1,0 +1,10 @@
+{
+  "name": "@devin/runtime",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/runtime",
+    "build": "go build -o bin/runtime ./cmd/runtime",
+    "start": "./bin/runtime"
+  }
+}

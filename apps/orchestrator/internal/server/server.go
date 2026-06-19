@@ -1,0 +1,149 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	devinv1 "github.com/rshdhere/devin/packages/sandbox/api/v1"
+	"github.com/rshdhere/devin/packages/orchestrator/store"
+)
+
+// InternalServer exposes sandbox lifecycle endpoints for the scheduler only.
+type InternalServer struct {
+	store     store.SandboxStore
+	namespace string
+}
+
+func NewInternal(sandboxStore store.SandboxStore, namespace string) *InternalServer {
+	return &InternalServer{store: sandboxStore, namespace: namespace}
+}
+
+func (s *InternalServer) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /internal/v1/sandboxes", s.handleListSandboxes)
+	mux.HandleFunc("POST /internal/v1/sandboxes", s.handleCreateSandbox)
+	mux.HandleFunc("GET /internal/v1/sandboxes/{name}", s.handleGetSandbox)
+	mux.HandleFunc("DELETE /internal/v1/sandboxes/{name}", s.handleDeleteSandbox)
+	return mux
+}
+
+func (s *InternalServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type createSandboxRequest struct {
+	Name string              `json:"name"`
+	Spec devinv1.SandboxSpec `json:"spec"`
+}
+
+func (s *InternalServer) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
+	var req createSandboxRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Spec.TaskID == "" {
+		writeError(w, http.StatusBadRequest, "spec.taskId is required")
+		return
+	}
+	if req.Spec.Image == "" {
+		req.Spec.Image = "devin-runtime:latest"
+	}
+	if req.Spec.CPU == 0 {
+		req.Spec.CPU = 1
+	}
+	if req.Spec.Memory == "" {
+		req.Spec.Memory = "1Gi"
+	}
+
+	sandbox := &devinv1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      req.Name,
+			Namespace: s.namespace,
+			Labels: map[string]string{
+				"devin.baby/task-id": req.Spec.TaskID,
+			},
+		},
+		Spec: req.Spec,
+	}
+
+	if err := s.store.Create(r.Context(), sandbox); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "sandbox already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	created, _ := s.store.Get(r.Context(), req.Name)
+	writeJSON(w, http.StatusAccepted, created)
+}
+
+func (s *InternalServer) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	sandbox, err := s.store.Get(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "sandbox not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sandbox)
+}
+
+func (s *InternalServer) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *InternalServer) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.store.Delete(r.Context(), name); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "sandbox not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"name": name,
+		"status": devinv1.SandboxStatus{
+			Phase:   devinv1.SandboxPhaseTerminating,
+			Message: "sandbox deleted",
+		},
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{
+		"error":     message,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@devin/orchestrator-app",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/orchestrator",
+    "build": "go build -o bin/orchestrator ./cmd/orchestrator",
+    "start": "./bin/orchestrator",
+    "check-types": "go vet ./..."
+  }
+}

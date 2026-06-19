@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  repository: devin-runtime
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9090
+
+scheduler:
+  enabled: true
+  port: 9091
+
+orchestrator:
+  enabled: true
+  port: 9090
+  sandboxNamespace: devin-sandboxes
+
+runtime:
+  image: devin-runtime:latest
+  workspaceSize: 10Gi
+  storageClass: gp3

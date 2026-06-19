@@ -1,180 +1,159 @@
-# Devin
+# Devin (devin.baby)
 
-Devin is an AI software engineer that helps teams plan, code, review, and ship faster. This repository contains the dashboard, API gateway, shared packages, and infrastructure definitions that power the platform.
+**devin.baby** is a mini Devin focused on the core software-engineering loop: submit work, get an isolated runtime, run the agent, stream progress, and persist results in `/workspace`.
+
+Sandboxes are an internal implementation detail. Users submit **Tasks**.
 
 ## Architecture
 
-![Devin system architecture](apps/web/public/devin-architecture.png)
-
-Devin follows a cloud-native architecture. A Next.js dashboard talks to an API gateway, which delegates sandbox lifecycle management to a Kubernetes controller. Each sandbox runs as an isolated pod with persistent storage, network policies, and real-time status feedback.
-
-### Components
-
-#### Frontend & Authentication
-
-| Component | Role | Implementation |
-| --- | --- | --- |
-| **Dashboard** | User-facing workspace for sessions, prompts, and agent activity | `apps/web` (Next.js) |
-| **Better Auth** | Session management, magic links, and OAuth | `packages/api/v1` |
-| **Resend** | Email delivery for verification and magic links | `packages/services/email` |
-
-#### API Gateway
-
-The API gateway is the central entry point between the dashboard and backend services.
-
-| Version | Runtime | Location | Status |
-| --- | --- | --- | --- |
-| **V1** | Bun / Express | `apps/server`, `packages/api/v1` | Active |
-| **V2** | Go | `packages/api/v2` | Planned |
-
-The gateway receives task requests from the dashboard, forwards sandbox operations to the orchestrator, and relays asynchronous status updates from sandbox pods back to the client.
-
-#### Sandbox Orchestrator
-
-A Kubernetes controller that reconciles `Sandbox` custom resources into running infrastructure. For each sandbox it ensures:
-
-- A **Pod** running the `devin-runtime` image
-- A **PersistentVolumeClaim** mounted at `/workspace`
-- A **NetworkPolicy** for pod isolation
-- **Status updates** written back to the CRD
-
-```go
-func Reconcile(ctx context.Context, req ctrl.Request) {
-  sandbox := getSandbox(req)
-  ensurePod()
-  ensurePVC()
-  ensureNetworkPolicy()
-  updateStatus()
-}
+```mermaid
+flowchart LR
+  User --> Web
+  Web --> Server
+  Server --> Scheduler
+  Scheduler --> Queue
+  Queue --> Orchestrator
+  Orchestrator --> CRD["Sandbox CRD"]
+  Controller --> CRD
+  Controller --> Pod
+  Controller --> PVC
+  Controller --> NetPol
+  Scheduler --> Runtime
+  Runtime --> Agent
+  Scheduler --> Events
+  Events --> Web
 ```
 
-The orchestrator uses `@kubernetes/client-node` (TypeScript) or `k8s.io/client-go` (Go) to interact with the Kubernetes API and returns `202 Accepted` while provisioning proceeds asynchronously.
+### Request flow
 
-#### Kubernetes Resources
+1. User → `POST /api/v1/tasks` `{ "prompt": "Build a Next.js auth system" }`
+2. **Server** authenticates and forwards to **Scheduler**
+3. **Scheduler** enqueues work and emits `task.created`
+4. Worker creates a **Sandbox CRD** via **Orchestrator** (internal API)
+5. **Controller** reconciles Pod + PVC + NetworkPolicy
+6. **Runtime supervisor** starts inside the pod
+7. Scheduler calls `POST /run` on the runtime — never shell on the host
+8. Events stream over SSE: `GET /api/v1/tasks/{id}/events`
 
-Sandboxes are declared as a custom resource:
-
-```yaml
-apiVersion: devin.ai/v1
-kind: Sandbox
-metadata:
-  name: sbx-123
-spec:
-  cpu: 2
-  memory: 4Gi
-  image: devin-runtime
-```
-
-The Kubernetes API persists CRD state in etcd. The controller watches for changes and drives the cluster toward the desired state.
-
-#### Sandbox Runtime
-
-Each sandbox pod is the isolated execution environment where the agent workflow runs:
-
-- **Agent workflow** — code generation, testing, and task execution inside `/workspace`
-- **Status updates** — streamed back to the API gateway for live dashboard feedback
-- **Network policy** — restricts ingress and egress for security
-- **PVC `/workspace`** — durable workspace storage backed by AWS EBS (`gp3` storage class)
-
-Long-term artifacts such as snapshots and logs are archived to **AWS S3**.
-
-### Request Flow
-
-1. User authenticates via the dashboard through Better Auth (email verification via Resend).
-2. Dashboard sends a task request to the API gateway.
-3. Gateway forwards the request to the sandbox orchestrator.
-4. Orchestrator creates or updates a `Sandbox` CRD in the Kubernetes API.
-5. Controller reconciles the CRD — provisioning the pod, PVC, and network policy.
-6. Agent runs inside the sandbox pod, persisting work to `/workspace`.
-7. Pod sends status updates to the API gateway, which reflects them on the dashboard.
-
-## Repository Structure
+### Repository layout
 
 ```
 devin/
 ├── apps/
-│   ├── web/              # Next.js dashboard
-│   └── server/           # Bun API server (V1 gateway entrypoint)
+│   ├── web/                 # Dashboard
+│   ├── server/              # API gateway (auth + task proxy)
+│   ├── scheduler/           # Task queue worker + SSE events
+│   ├── orchestrator/        # Sandbox CRD controller + internal API
+│   └── runtime/             # In-pod supervisor (PID 1)
 ├── packages/
-│   ├── api/
-│   │   ├── v1/           # Express + Better Auth routes (Bun)
-│   │   └── v2/           # Go API gateway (planned)
-│   ├── drizzle/          # PostgreSQL schema and migrations
-│   ├── email/            # Resend email templates and client
-│   ├── types/            # Shared TypeScript types
-│   ├── validators/       # Shared validation schemas
-│   ├── config/           # Shared configuration
-│   └── ui/               # Shared React components
-├── docker/               # Dockerfiles and Compose stacks
-├── tests/
-│   ├── e2e/              # End-to-end tests
-│   └── integration/      # Integration tests
-└── tooling/              # ESLint and TypeScript configs
+│   ├── orchestrator/        # K8s reconciliation logic
+│   ├── sandbox/             # Sandbox CRD types
+│   ├── scheduler/           # Task scheduling library
+│   ├── services/
+│   │   ├── email/           # Resend client
+│   │   └── queue/           # Task queue (memory + SQS)
+│   ├── events/              # Event bus + SSE helpers
+│   └── agent-sdk/           # Runtime HTTP client contract
+├── deploy/
+│   ├── kubernetes/          # CRD, RBAC, deployments
+│   └── helm/                # Helm chart scaffold
+└── runtime-images/          # nextjs, go, rust, node, python
 ```
 
-## Getting Started
+### Kubernetes namespaces
 
-### Prerequisites
+| Namespace | Workloads |
+| --- | --- |
+| `devin-app` | web, server |
+| `devin-system` | scheduler, orchestrator |
+| `devin-sandboxes` | sandbox pods (created by controller) |
 
-- [Bun](https://bun.sh) >= 1.2.3
-- [Node.js](https://nodejs.org) >= 18
-- Docker (for containerized development)
+### Runtime supervisor API
 
-### Local Development
+Every sandbox pod runs the runtime supervisor:
 
-Install dependencies:
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/run` | Execute agent task |
+| POST | `/terminal` | Shell commands |
+| POST | `/git/clone` | Clone repository |
+| POST | `/git/commit` | Commit changes |
+| POST | `/files/write` | Write workspace files |
+| POST | `/browser/open` | Browser automation |
+| GET | `/health` | Liveness |
+| GET | `/logs` | Supervisor logs |
+| GET | `/events` | Runtime event stream |
+
+The orchestrator **never** executes shell commands — it only provisions infrastructure and talks to the runtime over HTTP.
+
+### Persistence
+
+```
+Task → Sandbox CRD → Pod → PVC (/workspace)
+```
+
+If a pod crashes, a new pod mounts the same PVC and the task can resume.
+
+### Future evolution
+
+Only the isolation backend is swappable:
+
+```
+Today:     Controller → Pod
+Later:     Controller → Firecracker / Kata / gVisor
+```
+
+API, Scheduler, Runtime contract, Agent, and UI stay the same.
+
+## Local development
 
 ```sh
 bun install
-```
 
-Run all apps with Turborepo:
+# terminal 1 — orchestrator (dry-run)
+ORCHESTRATOR_DRY_RUN=true bun run dev --filter=@devin/orchestrator-app
 
-```sh
-bun run dev
-```
+# terminal 2 — runtime supervisor
+bun run dev --filter=@devin/runtime
 
-Or run individual apps:
+# terminal 3 — scheduler worker
+bun run dev --filter=@devin/scheduler-app
 
-```sh
-bun run dev --filter=@devin/web
+# terminal 4 — API + web
 bun run dev --filter=@devin/server
+bun run dev --filter=@devin/web
 ```
 
-### Docker Compose
-
-Start the full stack (PostgreSQL, API server, and web app):
+Create a task:
 
 ```sh
-docker compose -f docker/compose-dev.yaml up
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Build a Next.js auth system"}'
 ```
 
-| Service | URL |
-| --- | --- |
-| Dashboard | http://localhost:3000 |
-| API server | http://localhost:8080 |
-| PostgreSQL | localhost:5432 |
-
-Copy environment files before running:
+Stream events:
 
 ```sh
-cp apps/server/.env.sample apps/server/.env
-cp apps/web/.env.local.example apps/web/.env.local
+curl -N http://localhost:9091/api/v1/tasks/{taskId}/events
 ```
 
-### Database
+## Kubernetes deploy
 
 ```sh
-bun run migrate    # Push schema to PostgreSQL
-bun run studio     # Open Drizzle Studio
+kubectl apply -f deploy/kubernetes/namespaces.yaml
+kubectl apply -f deploy/kubernetes/crd/
+kubectl apply -f deploy/kubernetes/orchestrator/
+kubectl apply -f deploy/kubernetes/scheduler/
 ```
+
+Set on server: `SCHEDULER_URL=http://devin-scheduler.devin-system.svc:9091`
 
 ## Scripts
 
 | Command | Description |
 | --- | --- |
-| `bun run dev` | Start all apps in development mode |
+| `bun run dev` | Start all apps |
 | `bun run build` | Build all apps and packages |
 | `bun run lint` | Lint the monorepo |
-| `bun run check-types` | Run TypeScript type checking |
-| `bun run format` | Format code with Prettier |
+| `bun run check-types` | TypeScript type checking |

@@ -1,0 +1,19 @@
+{
+  "name": "@devin/scheduler-app",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "npx tsx watch src/bin.ts",
+    "start": "npx tsx src/bin.ts"
+  },
+  "dependencies": {
+    "@devin/scheduler": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.15.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

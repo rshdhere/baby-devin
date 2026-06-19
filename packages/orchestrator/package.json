@@ -1,0 +1,10 @@
+{
+  "name": "@devin/orchestrator",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "go build ./...",
+    "check-types": "go vet ./...",
+    "test": "go test ./..."
+  }
+}

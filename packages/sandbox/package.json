@@ -1,0 +1,9 @@
+{
+  "name": "@devin/sandbox",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "go build ./...",
+    "check-types": "go vet ./..."
+  }
+}

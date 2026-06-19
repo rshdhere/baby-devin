@@ -1,0 +1,12 @@
+{
+  "name": "@devin/agent-sdk",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

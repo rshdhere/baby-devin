@@ -1,0 +1,91 @@
+package v1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+type SandboxPhase string
+
+const (
+	SandboxPhasePending      SandboxPhase = "Pending"
+	SandboxPhaseProvisioning SandboxPhase = "Provisioning"
+	SandboxPhaseRunning      SandboxPhase = "Running"
+	SandboxPhaseFailed       SandboxPhase = "Failed"
+	SandboxPhaseTerminating  SandboxPhase = "Terminating"
+	SandboxPhaseTerminated   SandboxPhase = "Terminated"
+)
+
+type SandboxSpec struct {
+	TaskID string `json:"taskId,omitempty"`
+	CPU    int32  `json:"cpu"`
+	Memory string `json:"memory"`
+	Image  string `json:"image"`
+}
+
+type SandboxStatus struct {
+	Phase   SandboxPhase `json:"phase,omitempty"`
+	PodName string       `json:"podName,omitempty"`
+	PVCName string       `json:"pvcName,omitempty"`
+	Message string       `json:"message,omitempty"`
+}
+
+type Sandbox struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:",inline"`
+
+	Spec   SandboxSpec   `json:"spec,omitempty"`
+	Status SandboxStatus `json:"status,omitempty"`
+}
+
+type SandboxList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:",inline"`
+	Items           []Sandbox `json:"items"`
+}
+
+func (in *Sandbox) DeepCopyInto(out *Sandbox) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	out.Spec = in.Spec
+	out.Status = in.Status
+}
+
+func (in *Sandbox) DeepCopy() *Sandbox {
+	if in == nil {
+		return nil
+	}
+	out := new(Sandbox)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *Sandbox) DeepCopyObject() runtime.Object {
+	return in.DeepCopy()
+}
+
+func (in *SandboxList) DeepCopyInto(out *SandboxList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]Sandbox, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *SandboxList) DeepCopy() *SandboxList {
+	if in == nil {
+		return nil
+	}
+	out := new(SandboxList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SandboxList) DeepCopyObject() runtime.Object {
+	return in.DeepCopy()
+}
