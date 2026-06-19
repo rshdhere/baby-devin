@@ -8,23 +8,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	devinv1 "github.com/rshdhere/devin/packages/sandbox/api/v1"
+	"github.com/rshdhere/devin/packages/orchestrator/config"
+	"github.com/rshdhere/devin/packages/orchestrator/host"
 )
 
 type MemoryStore struct {
 	mu        sync.RWMutex
-	namespace string
+	cfg       config.Config
 	items     map[string]*devinv1.Sandbox
 }
 
-func NewMemoryStore(namespace string) *MemoryStore {
+func NewMemoryStore(cfg config.Config) *MemoryStore {
 	return &MemoryStore{
-		namespace: namespace,
-		items:     make(map[string]*devinv1.Sandbox),
+		cfg:   cfg,
+		items: make(map[string]*devinv1.Sandbox),
 	}
 }
 
 func (s *MemoryStore) Create(ctx context.Context, sandbox *devinv1.Sandbox) error {
-	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -34,15 +35,15 @@ func (s *MemoryStore) Create(ctx context.Context, sandbox *devinv1.Sandbox) erro
 
 	now := metav1.Now()
 	copy := sandbox.DeepCopy()
-	copy.Namespace = s.namespace
+	copy.Namespace = s.cfg.SandboxNamespace
 	copy.CreationTimestamp = now
 	copy.Status = devinv1.SandboxStatus{
 		Phase:   devinv1.SandboxPhasePending,
-		Message: "queued for local reconciliation",
+		Message: "queued for firecracker provisioning",
 	}
 	s.items[sandbox.Name] = copy
 
-	go s.simulateProvision(sandbox.Name)
+	go s.simulateProvision(context.Background(), sandbox.Name, copy.Spec)
 	return nil
 }
 
@@ -70,21 +71,65 @@ func (s *MemoryStore) List(_ context.Context) ([]devinv1.Sandbox, error) {
 
 func (s *MemoryStore) Delete(_ context.Context, name string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	item, ok := s.items[name]
 	if !ok {
+		s.mu.Unlock()
 		return ErrNotFound
 	}
 
-	item.Status.Phase = devinv1.SandboxPhaseTerminating
-	item.Status.Message = "deleting sandbox"
+	vmID := item.Status.VMID
 	delete(s.items, name)
+	s.mu.Unlock()
+
+	if vmID != "" {
+		_ = host.NewClient(s.cfg.FirecrackerHostURL).DeleteVM(context.Background(), vmID)
+	}
 	return nil
 }
 
-func (s *MemoryStore) simulateProvision(name string) {
-	time.Sleep(500 * time.Millisecond)
+func (s *MemoryStore) simulateProvision(ctx context.Context, name string, spec devinv1.SandboxSpec) {
+	s.setStatus(name, devinv1.SandboxStatus{
+		Phase:   devinv1.SandboxPhaseProvisioning,
+		Message: "assigning firecracker microVM from warm pool",
+	})
+
+	runtime := spec.Runtime
+	if runtime == "" {
+		runtime = s.cfg.DefaultRuntime
+	}
+
+	vm, err := host.NewClient(s.cfg.FirecrackerHostURL).CreateVM(ctx, host.CreateVMRequest{
+		Name:    name,
+		Runtime: runtime,
+		CPU:     spec.CPU,
+		Memory:  spec.Memory,
+		TaskID:  spec.TaskID,
+	})
+	if err != nil {
+		s.setStatus(name, devinv1.SandboxStatus{
+			Phase:   devinv1.SandboxPhaseFailed,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	runtimeURL := vm.RuntimeURL
+	if runtimeURL == "" {
+		runtimeURL = s.cfg.RuntimeFallbackURL
+	}
+
+	s.setStatus(name, devinv1.SandboxStatus{
+		Phase:       devinv1.SandboxPhaseRunning,
+		VMID:        vm.VMID,
+		Host:        vm.Host,
+		RuntimeURL:  runtimeURL,
+		MachineName: name + "-machine",
+		Message:     "firecracker microVM ready (dry-run)",
+	})
+}
+
+func (s *MemoryStore) setStatus(name string, status devinv1.SandboxStatus) {
+	time.Sleep(200 * time.Millisecond)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,11 +138,5 @@ func (s *MemoryStore) simulateProvision(name string) {
 	if !ok {
 		return
 	}
-
-	item.Status = devinv1.SandboxStatus{
-		Phase:   devinv1.SandboxPhaseRunning,
-		PodName: name,
-		PVCName: name + "-workspace",
-		Message: "local dry-run sandbox ready",
-	}
+	item.Status = status
 }

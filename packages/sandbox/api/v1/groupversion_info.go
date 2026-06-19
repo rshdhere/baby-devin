@@ -22,6 +22,12 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
 		&Sandbox{},
 		&SandboxList{},
+		&FirecrackerMachine{},
+		&FirecrackerMachineList{},
+		&FirecrackerHost{},
+		&FirecrackerHostList{},
+		&Snapshot{},
+		&SnapshotList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

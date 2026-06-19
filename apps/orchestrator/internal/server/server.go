@@ -58,8 +58,12 @@ func (s *InternalServer) handleCreateSandbox(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "spec.taskId is required")
 		return
 	}
-	if req.Spec.Image == "" {
-		req.Spec.Image = "devin-runtime:latest"
+	if req.Spec.Runtime == "" {
+		if req.Spec.Image != "" {
+			req.Spec.Runtime = req.Spec.Image
+		} else {
+			req.Spec.Runtime = "nextjs"
+		}
 	}
 	if req.Spec.CPU == 0 {
 		req.Spec.CPU = 1

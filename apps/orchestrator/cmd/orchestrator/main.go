@@ -40,7 +40,7 @@ func main() {
 
 	if cfg.DryRun {
 		slog.Info("orchestrator running in dry-run mode", "namespace", cfg.SandboxNamespace)
-		sandboxStore = store.NewMemoryStore(cfg.SandboxNamespace)
+		sandboxStore = store.NewMemoryStore(cfg)
 	} else {
 		restConfig := ctrl.GetConfigOrDie()
 		mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
@@ -58,6 +58,21 @@ func main() {
 				Config: cfg,
 			}).SetupWithManager(mgr); err != nil {
 				slog.Error("failed to register sandbox controller", "error", err)
+				os.Exit(1)
+			}
+			if err := (&reconcile.FirecrackerMachineReconciler{
+				Client: mgr.GetClient(),
+				Scheme: mgr.GetScheme(),
+				Config: cfg,
+			}).SetupWithManager(mgr); err != nil {
+				slog.Error("failed to register firecracker machine controller", "error", err)
+				os.Exit(1)
+			}
+			if err := (&reconcile.FirecrackerHostReconciler{
+				Client: mgr.GetClient(),
+				Config: cfg,
+			}).SetupWithManager(mgr); err != nil {
+				slog.Error("failed to register firecracker host controller", "error", err)
 				os.Exit(1)
 			}
 		}

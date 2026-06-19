@@ -17,17 +17,21 @@ const (
 )
 
 type SandboxSpec struct {
-	TaskID string `json:"taskId,omitempty"`
-	CPU    int32  `json:"cpu"`
-	Memory string `json:"memory"`
-	Image  string `json:"image"`
+	TaskID  string `json:"taskId,omitempty"`
+	Runtime string `json:"runtime"`
+	CPU     int32  `json:"cpu"`
+	Memory  string `json:"memory"`
+	// Image is deprecated; use Runtime to select a snapshot-backed runtime image.
+	Image string `json:"image,omitempty"`
 }
 
 type SandboxStatus struct {
-	Phase   SandboxPhase `json:"phase,omitempty"`
-	PodName string       `json:"podName,omitempty"`
-	PVCName string       `json:"pvcName,omitempty"`
-	Message string       `json:"message,omitempty"`
+	Phase       SandboxPhase `json:"phase,omitempty"`
+	VMID        string       `json:"vmId,omitempty"`
+	Host        string       `json:"host,omitempty"`
+	RuntimeURL  string       `json:"runtimeURL,omitempty"`
+	MachineName string       `json:"machineName,omitempty"`
+	Message     string       `json:"message,omitempty"`
 }
 
 type Sandbox struct {

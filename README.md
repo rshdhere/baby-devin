@@ -6,18 +6,24 @@ Sandboxes are an internal implementation detail. Users submit **Tasks**.
 
 ## Architecture
 
+Kubernetes is the **control plane**. Firecracker microVMs are the **execution plane**. The runtime HTTP contract never changes — the agent only knows `POST /run`, `POST /terminal`, `POST /git/*`, and `GET /events`.
+
 ```mermaid
-flowchart LR
+flowchart TB
   User --> Web
   Web --> Server
   Server --> Scheduler
   Scheduler --> Queue
   Queue --> Orchestrator
-  Orchestrator --> CRD["Sandbox CRD"]
-  Controller --> CRD
-  Controller --> Pod
-  Controller --> PVC
-  Controller --> NetPol
+  Orchestrator --> SandboxCRD["Sandbox CRD"]
+  SandboxController --> SandboxCRD
+  SandboxController --> MachineCRD["FirecrackerMachine CR"]
+  MachineController --> MachineCRD
+  MachineController --> HostSelect["Firecracker Host Selection"]
+  HostSelect --> FCHost["firecracker-host daemon"]
+  FCHost --> SnapshotPool["Warm Snapshot Pool"]
+  SnapshotPool --> microVM["Firecracker microVM"]
+  microVM --> Runtime["Runtime Supervisor"]
   Scheduler --> Runtime
   Runtime --> Agent
   Scheduler --> Events
@@ -30,10 +36,11 @@ flowchart LR
 2. **Server** authenticates and forwards to **Scheduler**
 3. **Scheduler** enqueues work and emits `task.created`
 4. Worker creates a **Sandbox CRD** via **Orchestrator** (internal API)
-5. **Controller** reconciles Pod + PVC + NetworkPolicy
-6. **Runtime supervisor** starts inside the pod
-7. Scheduler calls `POST /run` on the runtime — never shell on the host
-8. Events stream over SSE: `GET /api/v1/tasks/{id}/events`
+5. **Sandbox controller** creates a **FirecrackerMachine CR** (no Pods)
+6. **Machine controller** selects a **FirecrackerHost**, clones a warm snapshot, boots the microVM
+7. **Runtime supervisor** starts inside the VM and exposes the fixed HTTP contract
+8. Scheduler reads `status.runtimeURL` and calls `POST /run` — never shell on the host
+9. Events stream over SSE: `GET /api/v1/tasks/{id}/events`
 
 ### Repository layout
 
@@ -44,10 +51,11 @@ devin/
 │   ├── server/              # API gateway (auth + task proxy)
 │   ├── scheduler/           # Task queue worker + SSE events
 │   ├── orchestrator/        # Sandbox CRD controller + internal API
-│   └── runtime/             # In-pod supervisor (PID 1)
+│   ├── firecracker-host/    # Node daemon: VM pool + snapshot manager
+│   └── runtime/             # In-VM supervisor (PID 1)
 ├── packages/
 │   ├── orchestrator/        # K8s reconciliation logic
-│   ├── sandbox/             # Sandbox CRD types
+│   ├── sandbox/             # Sandbox + Firecracker CRD types
 │   ├── scheduler/           # Task scheduling library
 │   ├── services/
 │   │   ├── email/           # Resend client
@@ -55,9 +63,9 @@ devin/
 │   ├── events/              # Event bus + SSE helpers
 │   └── agent-sdk/           # Runtime HTTP client contract
 ├── deploy/
-│   ├── kubernetes/          # CRD, RBAC, deployments
+│   ├── kubernetes/          # CRDs, RBAC, orchestrator, firecracker-host
 │   └── helm/                # Helm chart scaffold
-└── runtime-images/          # nextjs, go, rust, node, python
+└── runtime-images/          # nextjs, go, rust, node, python → snapshots
 ```
 
 ### Kubernetes namespaces
@@ -66,11 +74,12 @@ devin/
 | --- | --- |
 | `devin-app` | web, server |
 | `devin-system` | scheduler, orchestrator |
-| `devin-sandboxes` | sandbox pods (created by controller) |
+| `devin-sandboxes` | Sandbox + FirecrackerMachine CRs |
+| `devin-firecracker` | FirecrackerHost CRs, firecracker-host DaemonSet |
 
 ### Runtime supervisor API
 
-Every sandbox pod runs the runtime supervisor:
+Every microVM runs the same runtime supervisor:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -86,40 +95,51 @@ Every sandbox pod runs the runtime supervisor:
 
 The orchestrator **never** executes shell commands — it only provisions infrastructure and talks to the runtime over HTTP.
 
-### Persistence
+### CRDs
 
+| Kind | Purpose |
+| --- | --- |
+| `Sandbox` | Task-facing sandbox intent (`taskId`, `runtime`, `cpu`, `memory`) |
+| `FirecrackerMachine` | Controller-managed microVM for a sandbox |
+| `FirecrackerHost` | Node capacity + firecracker-host API address |
+| `Snapshot` | Golden snapshot metadata per runtime image |
+
+### Warm snapshots
+
+Production hosts maintain a pool of ready microVMs restored from golden snapshots (~300ms) instead of cold booting kernels (~8–12s). Each `runtime-images/*` directory builds a snapshot consumed by `firecracker-host`.
+
+Build snapshots on a Linux Firecracker host:
+
+```sh
+go build -o apps/runtime/bin/runtime ./apps/runtime/cmd/runtime
+sudo ./scripts/build-firecracker-rootfs.sh nextjs devin-runtime-nextjs:latest
+sudo ./scripts/build-firecracker-snapshot.sh nextjs
 ```
-Task → Sandbox CRD → Pod → PVC (/workspace)
-```
 
-If a pod crashes, a new pod mounts the same PVC and the task can resume.
+Set `FIRECRACKER_DRY_RUN=false` on `firecracker-host` to enable snapshot restore via the Firecracker SDK + CNI (`fcnet`).
 
-### Future evolution
+### Swappable execution backends
 
-Only the isolation backend is swappable:
-
-```
-Today:     Controller → Pod
-Later:     Controller → Firecracker / Kata / gVisor
-```
-
-API, Scheduler, Runtime contract, Agent, and UI stay the same.
+The scheduler → HTTP → runtime path works whether the runtime lives in a Pod, Firecracker VM, Kata, or gVisor. Only the controller + host layer changes.
 
 ## Local development
 
 ```sh
 bun install
 
-# terminal 1 — orchestrator (dry-run)
+# terminal 1 — firecracker-host (dry-run VM pool)
+bun run dev --filter=@devin/firecracker-host
+
+# terminal 2 — orchestrator (dry-run, calls firecracker-host)
 ORCHESTRATOR_DRY_RUN=true bun run dev --filter=@devin/orchestrator-app
 
-# terminal 2 — runtime supervisor
+# terminal 3 — runtime supervisor
 bun run dev --filter=@devin/runtime
 
-# terminal 3 — scheduler worker
+# terminal 4 — scheduler worker
 bun run dev --filter=@devin/scheduler-app
 
-# terminal 4 — API + web
+# terminal 5 — API + web
 bun run dev --filter=@devin/server
 bun run dev --filter=@devin/web
 ```
@@ -143,6 +163,7 @@ curl -N http://localhost:9091/api/v1/tasks/{taskId}/events
 ```sh
 kubectl apply -f deploy/kubernetes/namespaces.yaml
 kubectl apply -f deploy/kubernetes/crd/
+kubectl apply -f deploy/kubernetes/firecracker/
 kubectl apply -f deploy/kubernetes/orchestrator/
 kubectl apply -f deploy/kubernetes/scheduler/
 ```

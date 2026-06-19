@@ -1,0 +1,10 @@
+{
+  "name": "@devin/firecracker-host",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/host",
+    "build": "go build -o bin/host ./cmd/host",
+    "start": "./bin/host"
+  }
+}

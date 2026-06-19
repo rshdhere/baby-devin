@@ -28,18 +28,16 @@ spec:
               value: "9090"
             - name: ORCHESTRATOR_DRY_RUN
               value: "false"
+            - name: ORCHESTRATOR_CONTROLLER_ENABLED
+              value: "true"
             - name: SANDBOX_NAMESPACE
               value: devin-sandboxes
+            - name: FIRECRACKER_NAMESPACE
+              value: devin-firecracker
             - name: APP_NAMESPACE
               value: devin-app
-            - name: SANDBOX_RUNTIME_IMAGE
-              value: devin-runtime:latest
-            - name: SANDBOX_WORKSPACE_SIZE
-              value: 10Gi
-            - name: SANDBOX_STORAGE_CLASS
-              value: gp3
-            - name: SANDBOX_GATEWAY_LABEL
-              value: app=devin-server
+            - name: SANDBOX_DEFAULT_RUNTIME
+              value: nextjs
           readinessProbe:
             httpGet:
               path: /health

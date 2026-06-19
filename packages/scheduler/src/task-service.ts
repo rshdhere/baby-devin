@@ -15,6 +15,15 @@ export interface TaskServiceOptions {
   queue?: TaskQueue<ScheduleJob>;
 }
 
+type SandboxRecord = {
+  status?: {
+    phase?: string;
+    runtimeURL?: string;
+    vmId?: string;
+    host?: string;
+  };
+};
+
 export class TaskService {
   private readonly tasks = new Map<string, Task>();
   private readonly eventBus: EventBus;
@@ -116,9 +125,9 @@ export class TaskService {
             name: sandboxName,
             spec: {
               taskId: task.id,
-              cpu: 1,
-              memory: "1Gi",
-              image: "devin-runtime:latest",
+              runtime: "nextjs",
+              cpu: 2,
+              memory: "4Gi",
             },
           }),
         },
@@ -130,14 +139,20 @@ export class TaskService {
         );
       }
 
-      await this.waitForSandbox(sandboxName, task.id);
-      this.emit("sandbox.started", task.id, "Sandbox pod is running", {
+      const sandbox = await this.waitForSandbox(sandboxName, task.id);
+      this.emit("sandbox.started", task.id, "Sandbox microVM is running", {
         sandboxName,
+        vmId: sandbox.status?.vmId,
+        host: sandbox.status?.host,
       });
 
-      const runtime = new RuntimeClient({ baseUrl: this.runtimeUrl });
+      const runtimeBaseUrl =
+        sandbox.status?.runtimeURL?.replace(/\/$/, "") || this.runtimeUrl;
+      const runtime = new RuntimeClient({ baseUrl: runtimeBaseUrl });
       await this.waitForRuntime(runtime, task.id);
-      this.emit("runtime.ready", task.id, "Runtime supervisor is ready");
+      this.emit("runtime.ready", task.id, "Runtime supervisor is ready", {
+        runtimeURL: runtimeBaseUrl,
+      });
 
       this.updateTask(task.id, "running", "Agent executing task");
       this.emit("agent.running", task.id, "Agent started", {
@@ -172,17 +187,15 @@ export class TaskService {
   private async waitForSandbox(
     sandboxName: string,
     taskId: string,
-  ): Promise<void> {
+  ): Promise<SandboxRecord> {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const response = await fetch(
         `${this.orchestratorUrl}/internal/v1/sandboxes/${encodeURIComponent(sandboxName)}`,
       );
       if (response.ok) {
-        const sandbox = (await response.json()) as {
-          status?: { phase?: string };
-        };
+        const sandbox = (await response.json()) as SandboxRecord;
         if (sandbox.status?.phase === "Running") {
-          return;
+          return sandbox;
         }
       }
       await sleep(500);

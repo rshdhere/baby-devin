@@ -1,0 +1,15 @@
+apiVersion: devin.baby/v1
+kind: FirecrackerHost
+metadata:
+  name: fc-local
+  namespace: devin-firecracker
+spec:
+  address: http://devin-firecracker-host.devin-firecracker.svc.cluster.local:9092
+  capacity:
+    cpu: 32
+    memory: 64Gi
+status:
+  usedCPU: 0
+  usedMemory: 0Gi
+  readyVMs: 8
+  message: sample host for dry-run clusters

@@ -1,6 +1,8 @@
 # Runtime images
 
-Sandbox pods run the **devin runtime supervisor** plus a language-specific toolchain. Build every image from the **repository root**.
+Runtime images become **Firecracker golden snapshots**. Each directory builds a Docker image that is exported to `rootfs.ext4`, booted once, snapshotted, and restored in ~300ms by `firecracker-host`.
+
+Build every image from the **repository root**.
 
 ## Prerequisites
 
@@ -8,6 +10,14 @@ Compile the supervisor binary once:
 
 ```sh
 go build -o apps/runtime/bin/runtime ./apps/runtime/cmd/runtime
+```
+
+Download a Firecracker-compatible kernel (once per host):
+
+```sh
+mkdir -p /var/lib/devin/linux
+curl -fsSL -o /var/lib/devin/linux/vmlinux \
+  https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux
 ```
 
 ## Variants
@@ -20,7 +30,7 @@ go build -o apps/runtime/bin/runtime ./apps/runtime/cmd/runtime
 | `node/` | `devin-runtime-node:latest` | Node 22 |
 | `python/` | `devin-runtime-python:latest` | Python 3.12 |
 
-## Build
+## Build Docker images
 
 ```sh
 docker build -f runtime-images/nextjs/Dockerfile -t devin-runtime-nextjs:latest .
@@ -30,13 +40,39 @@ docker build -f runtime-images/node/Dockerfile -t devin-runtime-node:latest .
 docker build -f runtime-images/python/Dockerfile -t devin-runtime-python:latest .
 ```
 
+## Build Firecracker snapshots
+
+On a Linux host with `firecracker`, CNI plugins, and root:
+
+```sh
+chmod +x scripts/build-firecracker-rootfs.sh scripts/build-firecracker-snapshot.sh
+
+# 1. Export Docker rootfs to ext4
+sudo ./scripts/build-firecracker-rootfs.sh nextjs devin-runtime-nextjs:latest
+
+# 2. Boot once and capture golden snapshot
+sudo ./scripts/build-firecracker-snapshot.sh nextjs
+```
+
+Snapshot layout:
+
+```
+/var/lib/devin/snapshots/nextjs/
+  rootfs.ext4
+  mem.snap
+  vm.snap
+  meta.json
+```
+
 ## Kubernetes
 
-Set the sandbox image when scheduling (or via `SANDBOX_RUNTIME_IMAGE` on the orchestrator), for example:
+Sandboxes reference a **runtime** (not a Pod image):
 
 ```yaml
 spec:
-  image: devin-runtime-nextjs:latest
+  runtime: nextjs
+  cpu: 2
+  memory: 4Gi
 ```
 
-Each image exposes the runtime supervisor on port **8080** inside the pod.
+The orchestrator selects a `FirecrackerHost`, and `firecracker-host` restores the matching snapshot. The runtime supervisor listens on port **8080** inside the microVM.

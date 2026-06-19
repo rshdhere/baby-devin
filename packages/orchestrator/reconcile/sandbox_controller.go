@@ -2,11 +2,8 @@ package reconcile
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,95 +40,75 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	if err := r.ensurePVC(ctx, &sandbox); err != nil {
+	if sandbox.Spec.Runtime == "" {
+		sandbox.Spec.Runtime = r.Config.DefaultRuntime
+	}
+
+	if err := r.ensureMachine(ctx, &sandbox); err != nil {
 		return r.fail(ctx, &sandbox, err)
 	}
 
-	if err := r.ensurePod(ctx, &sandbox); err != nil {
-		return r.fail(ctx, &sandbox, err)
+	if sandbox.Status.Phase == devinv1.SandboxPhaseRunning {
+		return ctrl.Result{}, nil
 	}
 
-	if err := r.ensureNetworkPolicy(ctx, &sandbox); err != nil {
-		return r.fail(ctx, &sandbox, err)
+	return r.writeStatus(ctx, &sandbox, devinv1.SandboxPhaseProvisioning, "provisioning firecracker microVM")
+}
+
+func (r *SandboxReconciler) ensureMachine(ctx context.Context, sandbox *devinv1.Sandbox) error {
+	machine := &devinv1.FirecrackerMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      machineNameForSandbox(sandbox.Name),
+			Namespace: sandbox.Namespace,
+		},
 	}
 
-	pod := &corev1.Pod{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: sandbox.Namespace, Name: sandbox.Name}, pod); err != nil {
-		if apierrors.IsNotFound(err) {
-			return r.writeStatus(ctx, &sandbox, devinv1.SandboxPhaseProvisioning, "waiting for sandbox pod", "", pvcName(sandbox.Name))
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, machine, func() error {
+		if err := controllerutil.SetControllerReference(sandbox, machine, r.Scheme); err != nil {
+			return err
 		}
-		return r.fail(ctx, &sandbox, err)
-	}
-
-	phase, message := phaseFromPod(pod)
-	return r.writeStatus(ctx, &sandbox, phase, message, sandbox.Name, pvcName(sandbox.Name))
-}
-
-func (r *SandboxReconciler) ensurePVC(ctx context.Context, sandbox *devinv1.Sandbox) error {
-	pvc := workspacePVC(sandbox, r.Config)
-	if err := controllerutil.SetControllerReference(sandbox, pvc, r.Scheme); err != nil {
-		return err
-	}
-
-	existing := &corev1.PersistentVolumeClaim{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(pvc), existing)
-	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, pvc)
-	}
+		machine.Spec = devinv1.FirecrackerMachineSpec{
+			SandboxName: sandbox.Name,
+			TaskID:      sandbox.Spec.TaskID,
+			Runtime:     sandbox.Spec.Runtime,
+			CPU:         sandbox.Spec.CPU,
+			Memory:      sandbox.Spec.Memory,
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	return nil
-}
+	_ = op
 
-func (r *SandboxReconciler) ensurePod(ctx context.Context, sandbox *devinv1.Sandbox) error {
-	pod := sandboxPod(sandbox, r.Config)
-	if err := controllerutil.SetControllerReference(sandbox, pod, r.Scheme); err != nil {
+	latestMachine := &devinv1.FirecrackerMachine{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(machine), latestMachine); err != nil {
 		return err
 	}
 
-	existing := &corev1.Pod{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(pod), existing)
-	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, pod)
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *SandboxReconciler) ensureNetworkPolicy(ctx context.Context, sandbox *devinv1.Sandbox) error {
-	policy := sandboxNetworkPolicy(sandbox, r.Config)
-	if err := controllerutil.SetControllerReference(sandbox, policy, r.Scheme); err != nil {
-		return err
+	if latestMachine.Status.Phase == devinv1.MachinePhaseRunning {
+		sandbox.Status.Phase = devinv1.SandboxPhaseRunning
+		sandbox.Status.VMID = latestMachine.Status.VMID
+		sandbox.Status.Host = latestMachine.Status.Host
+		sandbox.Status.RuntimeURL = latestMachine.Status.RuntimeURL
+		sandbox.Status.MachineName = latestMachine.Name
+		sandbox.Status.Message = latestMachine.Status.Message
+		return r.Status().Update(ctx, sandbox)
 	}
 
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(policy), existing)
-	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, policy)
-	}
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
 func (r *SandboxReconciler) finalize(ctx context.Context, sandbox *devinv1.Sandbox) (ctrl.Result, error) {
 	if controllerutil.ContainsFinalizer(sandbox, sandboxFinalizer) {
-		_, _ = r.writeStatus(ctx, sandbox, devinv1.SandboxPhaseTerminating, "cleaning up sandbox resources", "", "")
-
-		objects := []client.Object{
-			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: sandbox.Name, Namespace: sandbox.Namespace}},
-			&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName(sandbox.Name), Namespace: sandbox.Namespace}},
-			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: networkPolicyName(sandbox.Name), Namespace: sandbox.Namespace}},
+		machine := &devinv1.FirecrackerMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      machineNameForSandbox(sandbox.Name),
+				Namespace: sandbox.Namespace,
+			},
 		}
-
-		for _, obj := range objects {
-			if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, err
-			}
+		if err := r.Delete(ctx, machine); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
 		}
 
 		controllerutil.RemoveFinalizer(sandbox, sandboxFinalizer)
@@ -139,12 +116,11 @@ func (r *SandboxReconciler) finalize(ctx context.Context, sandbox *devinv1.Sandb
 			return ctrl.Result{}, err
 		}
 	}
-
 	return ctrl.Result{}, nil
 }
 
 func (r *SandboxReconciler) fail(ctx context.Context, sandbox *devinv1.Sandbox, err error) (ctrl.Result, error) {
-	_, _ = r.writeStatus(ctx, sandbox, devinv1.SandboxPhaseFailed, err.Error(), "", pvcName(sandbox.Name))
+	_, _ = r.writeStatus(ctx, sandbox, devinv1.SandboxPhaseFailed, err.Error())
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 }
 
@@ -153,8 +129,6 @@ func (r *SandboxReconciler) writeStatus(
 	sandbox *devinv1.Sandbox,
 	phase devinv1.SandboxPhase,
 	message string,
-	podName string,
-	pvc string,
 ) (ctrl.Result, error) {
 	latest := &devinv1.Sandbox{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(sandbox), latest); err != nil {
@@ -163,8 +137,6 @@ func (r *SandboxReconciler) writeStatus(
 
 	latest.Status.Phase = phase
 	latest.Status.Message = message
-	latest.Status.PodName = podName
-	latest.Status.PVCName = pvc
 
 	if err := r.Status().Update(ctx, latest); err != nil {
 		return ctrl.Result{}, err
@@ -177,26 +149,9 @@ func (r *SandboxReconciler) writeStatus(
 	return ctrl.Result{}, nil
 }
 
-func phaseFromPod(pod *corev1.Pod) (devinv1.SandboxPhase, string) {
-	switch pod.Status.Phase {
-	case corev1.PodRunning:
-		return devinv1.SandboxPhaseRunning, "sandbox pod is running"
-	case corev1.PodPending:
-		return devinv1.SandboxPhaseProvisioning, "sandbox pod is pending"
-	case corev1.PodFailed:
-		return devinv1.SandboxPhaseFailed, "sandbox pod failed"
-	case corev1.PodSucceeded:
-		return devinv1.SandboxPhaseTerminated, "sandbox pod completed"
-	default:
-		return devinv1.SandboxPhaseProvisioning, fmt.Sprintf("sandbox pod phase %s", pod.Status.Phase)
-	}
-}
-
 func (r *SandboxReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&devinv1.Sandbox{}).
-		Owns(&corev1.Pod{}).
-		Owns(&corev1.PersistentVolumeClaim{}).
-		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&devinv1.FirecrackerMachine{}).
 		Complete(r)
 }

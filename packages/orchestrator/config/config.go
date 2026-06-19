@@ -7,26 +7,26 @@ import (
 )
 
 type Config struct {
-	DryRun            bool
-	SandboxNamespace  string
-	AppNamespace      string
-	RuntimeImage      string
-	WorkspaceSize     string
-	StorageClass      string
-	GatewayPodLabel   string
-	ControllerEnabled bool
+	DryRun               bool
+	SandboxNamespace     string
+	FirecrackerNamespace string
+	AppNamespace         string
+	DefaultRuntime       string
+	FirecrackerHostURL   string
+	RuntimeFallbackURL   string
+	ControllerEnabled    bool
 }
 
 func LoadFromEnv() Config {
 	return Config{
-		DryRun:            envBool("ORCHESTRATOR_DRY_RUN", true),
-		SandboxNamespace:  envString("SANDBOX_NAMESPACE", "devin-sandboxes"),
-		AppNamespace:      envString("APP_NAMESPACE", "devin-app"),
-		RuntimeImage:      envString("SANDBOX_RUNTIME_IMAGE", "devin-runtime:latest"),
-		WorkspaceSize:     envString("SANDBOX_WORKSPACE_SIZE", "10Gi"),
-		StorageClass:      envString("SANDBOX_STORAGE_CLASS", ""),
-		GatewayPodLabel:   envString("SANDBOX_GATEWAY_LABEL", "app=devin-server"),
-		ControllerEnabled: envBool("ORCHESTRATOR_CONTROLLER_ENABLED", true),
+		DryRun:               envBool("ORCHESTRATOR_DRY_RUN", true),
+		SandboxNamespace:     envString("SANDBOX_NAMESPACE", "devin-sandboxes"),
+		FirecrackerNamespace: envString("FIRECRACKER_NAMESPACE", "devin-firecracker"),
+		AppNamespace:         envString("APP_NAMESPACE", "devin-app"),
+		DefaultRuntime:       envString("SANDBOX_DEFAULT_RUNTIME", "nextjs"),
+		FirecrackerHostURL:   envString("FIRECRACKER_HOST_URL", "http://localhost:9092"),
+		RuntimeFallbackURL:   envString("RUNTIME_URL", "http://localhost:8081"),
+		ControllerEnabled:    envBool("ORCHESTRATOR_CONTROLLER_ENABLED", true),
 	}
 }
 
