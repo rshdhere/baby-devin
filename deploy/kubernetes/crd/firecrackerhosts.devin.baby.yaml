@@ -27,6 +27,9 @@ spec:
         - name: UsedCPU
           type: integer
           jsonPath: .status.usedCPU
+        - name: Node
+          type: string
+          jsonPath: .spec.nodeName
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -50,6 +53,12 @@ spec:
                       minimum: 1
                     memory:
                       type: string
+                nodeName:
+                  type: string
+                  description: Kubernetes node name when firecracker-host runs in-cluster.
+                schedulerAddress:
+                  type: string
+                  description: HTTP base URL of the co-located scheduler on this host.
             status:
               type: object
               properties:

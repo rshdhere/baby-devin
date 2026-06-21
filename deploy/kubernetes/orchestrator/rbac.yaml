@@ -9,6 +9,9 @@ kind: ClusterRole
 metadata:
   name: devin-orchestrator
 rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["devin.baby"]
     resources:
       - sandboxes

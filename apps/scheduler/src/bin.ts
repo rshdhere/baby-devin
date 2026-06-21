@@ -9,10 +9,12 @@ const defaultAgent = process.env.DEFAULT_AGENT as
   | "claude"
   | "mock"
   | undefined;
+const preferredHost = process.env.SCHEDULER_HOST_NAME?.trim() || undefined;
 
 const tasks = new TaskService({
   orchestratorUrl,
   runtimeUrl,
+  preferredHost,
   defaultAgent,
 });
 

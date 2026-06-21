@@ -55,7 +55,7 @@ func (r *FirecrackerMachineReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 func (r *FirecrackerMachineReconciler) provisionVM(ctx context.Context, machine *devinv1.FirecrackerMachine) (ctrl.Result, error) {
-	selectedHost, err := selectFirecrackerHost(ctx, r.Client, r.Config.FirecrackerNamespace, machine.Spec.CPU)
+	selectedHost, err := selectFirecrackerHost(ctx, r.Client, r.Config.FirecrackerNamespace, machine.Spec.CPU, firstNonEmpty(machine.Spec.PreferredHost, machine.Spec.Host))
 	if err != nil {
 		return r.fail(ctx, machine, err)
 	}

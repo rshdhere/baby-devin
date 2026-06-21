@@ -17,10 +17,11 @@ const (
 )
 
 type SandboxSpec struct {
-	TaskID  string `json:"taskId,omitempty"`
-	Runtime string `json:"runtime"`
-	CPU     int32  `json:"cpu"`
-	Memory  string `json:"memory"`
+	TaskID         string `json:"taskId,omitempty"`
+	Runtime        string `json:"runtime"`
+	CPU            int32  `json:"cpu"`
+	Memory         string `json:"memory"`
+	PreferredHost  string `json:"preferredHost,omitempty"`
 	// Image is deprecated; use Runtime to select a snapshot-backed runtime image.
 	Image string `json:"image,omitempty"`
 }

@@ -17,12 +17,13 @@ const (
 )
 
 type FirecrackerMachineSpec struct {
-	SandboxName string `json:"sandboxName"`
-	TaskID      string `json:"taskId,omitempty"`
-	Runtime     string `json:"runtime"`
-	CPU         int32  `json:"cpu"`
-	Memory      string `json:"memory"`
-	Host        string `json:"host,omitempty"`
+	SandboxName    string `json:"sandboxName"`
+	TaskID         string `json:"taskId,omitempty"`
+	Runtime        string `json:"runtime"`
+	CPU            int32  `json:"cpu"`
+	Memory         string `json:"memory"`
+	Host           string `json:"host,omitempty"`
+	PreferredHost  string `json:"preferredHost,omitempty"`
 }
 
 type FirecrackerMachineStatus struct {

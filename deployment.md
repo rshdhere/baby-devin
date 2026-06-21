@@ -1,16 +1,164 @@
 # Deploying devin.baby on Kubernetes
 
-This guide walks through a production deployment of devin.baby: the web dashboard, API server, Postgres, and Kubernetes control plane — plus **dedicated execution Droplets** that run Firecracker microVMs outside the cluster.
+This guide covers production deployment of devin.baby: web, API server, Postgres, orchestrator, and Firecracker microVM sandboxes.
 
-## Recommended production architecture
+Unlike generic container sandboxing (Kata Containers + containerd + devmapper), devin.baby uses **golden snapshot pools** and a **custom runtime supervisor** inside each microVM. We borrow the **dedicated KVM worker pool** idea from Kata/Firecracker-on-K8s guides — labeled nodes, co-located daemons, host-local networking — without adopting Kata itself.
 
-Sandboxes run as Firecracker microVMs with host-local networking (`192.168.127.0/24`). The runtime supervisor inside each microVM is only reachable **from the machine running `firecracker-host`**, not from arbitrary Pods in Kubernetes.
+## Choose a deployment path
 
-For that reason, production deployments should:
+| Path | When to use | Manifest bundle |
+| --- | --- | --- |
+| **A — In-cluster KVM pool** | Bare-metal or self-managed K8s with `/dev/kvm` worker nodes | `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone` |
+| **B — External execution hosts** | Managed K8s without nested KVM (DOKS, GKE standard, EKS) | `kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone` + Droplets |
 
-1. Run **web, server, Postgres, and orchestrator** inside Kubernetes.
-2. Run **`firecracker-host` + scheduler** on dedicated Linux Droplets (outside the cluster).
-3. Register each execution Droplet as a **`FirecrackerHost` CR** so the in-cluster orchestrator can provision microVMs on it.
+Both paths share the same control-plane CRDs (`Sandbox`, `FirecrackerMachine`, `FirecrackerHost`) and the same app tier (Postgres, server, web).
+
+---
+
+## Path A — In-cluster KVM worker pool (recommended for bare metal)
+
+Sandboxes run as Firecracker microVMs with host-local networking (`192.168.127.0/24`). The runtime supervisor is only reachable **from the node running `firecracker-host`**, so the scheduler runs as a **co-located DaemonSet** on the same labeled workers.
+
+```text
+                         ┌──────────────────────────────────────────────┐
+                         │              Kubernetes cluster               │
+                         │  devin-app: web, server, postgres            │
+                         │  devin-system: orchestrator                   │
+                         │  devin-sandboxes: Sandbox / Machine CRs       │
+                         │  devin-firecracker:                           │
+                         │    firecracker-host DaemonSet (KVM nodes)     │
+                         │    scheduler DaemonSet (same nodes)           │
+                         │    FirecrackerHost CRs (auto-registered)      │
+                         └──────────────────────────────────────────────┘
+                                    labeled nodes: devin.baby/firecracker-host=true
+                                    /dev/kvm + /var/lib/devin snapshots on each worker
+```
+
+Traffic flow:
+
+```text
+User → Ingress → web (3000) + server (8080)
+server → scheduler on KVM node (:9091, hostNetwork)
+scheduler → orchestrator (:9090) → Sandbox CR (preferredHost = node name)
+orchestrator → firecracker-host on same node (:9092) → microVM (:8080, 192.168.127.x)
+scheduler → runtime inside microVM (host-local CNI)
+```
+
+| Layer | Where it runs | Namespace |
+| --- | --- | --- |
+| App | Kubernetes | `devin-app` |
+| Orchestrator | Kubernetes | `devin-system` |
+| firecracker-host + scheduler | **KVM worker nodes** (DaemonSets) | `devin-firecracker` |
+| CRDs / sandbox state | Kubernetes | `devin-sandboxes`, `devin-firecracker` |
+
+### A.1 Prerequisites
+
+- Kubernetes **1.28+** with at least one worker that has **`/dev/kvm`** (hardware virtualization).
+- Do **not** use nested virt on managed-cloud worker nodes (DOKS, etc.) — use Path B instead.
+- `kubectl`, ingress + TLS, container registry.
+- Fast local disk on KVM workers for `/var/lib/devin`.
+
+### A.2 Build and push images
+
+See [§1 Build and push container images](#1-build-and-push-container-images) below, then:
+
+```sh
+kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
+
+kubectl -n devin-system set image deployment/devin-orchestrator \
+  orchestrator=$REGISTRY/devin-orchestrator:$TAG
+kubectl -n devin-firecracker set image daemonset/devin-firecracker-host \
+  firecracker-host=$REGISTRY/devin-firecracker-host:$TAG
+kubectl -n devin-firecracker set image daemonset/devin-scheduler \
+  scheduler=$REGISTRY/devin-scheduler:$TAG
+```
+
+### A.3 Prepare snapshots on each KVM worker
+
+On every labeled worker (before or after joining the cluster):
+
+```sh
+go build -o apps/runtime/bin/runtime ./apps/runtime/cmd/runtime
+sudo mkdir -p /var/lib/devin/linux
+sudo curl -fsSL -o /var/lib/devin/linux/vmlinux \
+  https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux
+docker build -f runtime-images/nextjs/Dockerfile -t devin-runtime-nextjs:latest .
+docker build -f runtime-images/agent/Dockerfile -t devin-runtime-agent:latest .
+sudo ./scripts/build-firecracker-rootfs.sh nextjs devin-runtime-nextjs:latest
+sudo ./scripts/build-firecracker-snapshot.sh nextjs
+sudo ./scripts/build-firecracker-rootfs.sh agent devin-runtime-agent:latest
+sudo ./scripts/build-firecracker-snapshot.sh agent
+```
+
+Verify:
+
+```text
+/var/lib/devin/
+├── linux/vmlinux
+└── snapshots/
+    ├── nextjs/
+    └── agent/
+```
+
+### A.4 Label the KVM worker pool
+
+Inspired by Kata's `katacontainers.io/kata-runtime=true` node label, devin.baby uses:
+
+```sh
+kubectl label node <kvm-node-name> devin.baby/firecracker-host=true
+```
+
+Optional taint to keep general workloads off execution nodes:
+
+```sh
+kubectl taint nodes <kvm-node-name> devin.baby/firecracker-host=true:NoSchedule
+```
+
+The orchestrator **node pool controller** (enabled by default) watches labeled nodes and creates a `FirecrackerHost` CR per node:
+
+| CR field | Value |
+| --- | --- |
+| `metadata.name` | sanitized node name |
+| `spec.nodeName` | Kubernetes node name |
+| `spec.address` | `http://<node-internal-ip>:9092` |
+| `spec.schedulerAddress` | `http://<node-internal-ip>:9091` |
+
+Verify:
+
+```sh
+kubectl -n devin-firecracker get firecrackerhosts -o wide
+kubectl -n devin-firecracker get pods -o wide
+```
+
+### A.5 Scheduler URL for the API server
+
+The scheduler DaemonSet uses `hostNetwork` and listens on `:9091` on each KVM node. Each scheduler sets `SCHEDULER_HOST_NAME` to its node name and passes `spec.preferredHost` when creating sandboxes so VMs land on the local host.
+
+**Single KVM node (simplest):** set server `SCHEDULER_URL` from the registered host:
+
+```sh
+kubectl -n devin-firecracker get firecrackerhosts -o jsonpath='{.items[0].spec.schedulerAddress}'
+```
+
+**Multiple KVM nodes:** each scheduler holds in-memory task state. Point `SCHEDULER_URL` at one node's `spec.schedulerAddress`, or add sticky routing later. Scale execution by adding labeled nodes; pin traffic per node until shared queue routing is implemented.
+
+### A.6 Post-deploy checks (in-cluster)
+
+```sh
+# On the KVM worker
+curl -s http://127.0.0.1:9092/v1/status
+curl -s http://127.0.0.1:9091/health
+
+# From the cluster
+kubectl -n devin-system logs deploy/devin-orchestrator --tail=50
+kubectl -n devin-sandboxes get sandboxes,firecrackermachines -w
+```
+
+---
+
+## Path B — External execution hosts (managed cloud)
+
+When your Kubernetes workers lack hardware KVM (typical on DOKS/GKE/EKS), run `firecracker-host` + `scheduler` on **dedicated Linux VMs outside the cluster** and register them with `FirecrackerHost` CRs.
 
 ```text
                          ┌─────────────────────────────────────┐
@@ -18,7 +166,7 @@ For that reason, production deployments should:
                          │  devin-app: web, server, postgres   │
                          │  devin-system: orchestrator          │
                          │  devin-sandboxes: Sandbox/Machine CRs│
-                         │  devin-firecracker: FirecrackerHost │
+                         │  devin-firecracker: FirecrackerHost  │
                          │              CRs only              │
                          └──────────────┬──────────────────────┘
                                         │ orchestrator → :9092
@@ -29,34 +177,22 @@ For that reason, production deployments should:
          │  scheduler        :9091      │    scheduler        :9091     │
          │  microVMs 192.168.127.x      │    microVMs 192.168.127.x   │
          └──────────────────────────────┴──────────────────────────────┘
-                                        ▲
-                                        │ SCHEDULER_URL
-                                   server (in cluster)
 ```
 
-Traffic flow:
+Deploy the control plane:
 
-```text
-User → Ingress → web (3000) + server (8080)
-server → scheduler on execution Droplet (9091)
-scheduler → orchestrator in cluster (9090) → Sandbox CR
-orchestrator → firecracker-host on Droplet (9092) → microVM runtime (8080, host-local)
-scheduler → runtime inside microVM (same Droplet, local CNI IP)
+```sh
+kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
+kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
 ```
 
-| Layer | Where it runs | Namespace / host |
-| --- | --- | --- |
-| App | Kubernetes | `devin-app` |
-| Control plane (orchestrator) | Kubernetes | `devin-system` |
-| Control plane (scheduler) | **Execution Droplet** | co-located with firecracker-host |
-| CRDs / Sandbox state | Kubernetes | `devin-sandboxes`, `devin-firecracker` |
-| Execution (microVMs) | **Execution Droplet** | `/var/lib/devin` on host |
+Set `ORCHESTRATOR_NODE_REGISTER_ENABLED=false` is applied automatically by the external kustomize overlay. Register each Droplet manually in `external-host.yaml`.
 
-The repo ships Kubernetes manifests under `deploy/kubernetes/` for the in-cluster components. The app tier examples below can be applied directly. Firecracker execution is **not** deployed as an in-cluster DaemonSet in production.
+See [§2–§4 below](#2-prepare-firecracker-snapshots-on-execution-droplets) for Droplet provisioning, snapshot prep, and firewall rules.
 
 ---
 
-## Prerequisites
+## Prerequisites (both paths)
 
 ### Kubernetes cluster
 
@@ -168,7 +304,7 @@ Update image references in `deploy/kubernetes/` before applying in-cluster manif
 
 ---
 
-## 2. Prepare Firecracker snapshots on execution Droplets
+## 2. Prepare Firecracker snapshots on execution hosts
 
 On each execution Droplet (or a build machine, then copy artifacts to every host):
 
@@ -307,41 +443,33 @@ Load-balance schedulers from the API server with one of:
 
 ---
 
-## 4. Deploy Kubernetes (control plane + app)
+## 4. Deploy Kubernetes control plane
 
-### 4.1 Namespaces and CRDs
+### Path A (in-cluster KVM)
 
-```sh
-kubectl apply -f deploy/kubernetes/namespaces.yaml
-kubectl apply -f deploy/kubernetes/crd/
-kubectl get crd | grep devin.baby
-```
+Already covered in [Path A](#path-a--in-cluster-kvm-worker-pool-recommended-for-bare-metal). Use `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone`.
 
-Expected: `sandboxes`, `firecrackermachines`, `firecrackerhosts`, `snapshots`.
-
-> **Do not** apply `deploy/kubernetes/firecracker/daemonset.yaml` in production. That manifest is for local/dev only.
-
-### 4.2 Orchestrator
+### Path B (external hosts) — orchestrator only
 
 ```sh
-kubectl apply -f deploy/kubernetes/orchestrator/rbac.yaml
-kubectl apply -f deploy/kubernetes/orchestrator/deployment.yaml
+kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
 kubectl -n devin-system set image deployment/devin-orchestrator \
   orchestrator=$REGISTRY/devin-orchestrator:$TAG
 ```
 
-Confirm env in the deployment:
+**Do not** apply `deploy/kubernetes/firecracker/daemonset.yaml` or `deploy/kubernetes/scheduler/daemonset.yaml` on Path B.
+
+Confirm orchestrator env:
 
 ```text
 ORCHESTRATOR_DRY_RUN=false
 ORCHESTRATOR_CONTROLLER_ENABLED=true
+ORCHESTRATOR_NODE_REGISTER_ENABLED=false   # Path B only
 SANDBOX_NAMESPACE=devin-sandboxes
 FIRECRACKER_NAMESPACE=devin-firecracker
 ```
 
-**Do not** deploy `deploy/kubernetes/scheduler/deployment.yaml` — scheduler runs on execution Droplets.
-
-### 4.3 Register execution Droplets as FirecrackerHost CRs
+### 4.3 Register external execution hosts (Path B only)
 
 Create one CR per execution Droplet. Use the Droplet's **VPC private IP** (reachable from orchestrator Pods):
 
@@ -517,7 +645,10 @@ psql "$DATABASE_URL" -f packages/drizzle/drizzle/0001_github_settings.sql
 
 ## 6. Deploy API server and web
 
-Set `SCHEDULER_URL` to your execution Droplet scheduler endpoint (or load balancer):
+Set `SCHEDULER_URL` to your scheduler endpoint:
+
+- **Path A:** `spec.schedulerAddress` from the registered `FirecrackerHost` CR
+- **Path B:** `http://<execution-droplet-private-ip>:9091` or load balancer URL
 
 ```yaml
 # deploy/kubernetes/app/secrets.yaml
@@ -606,13 +737,13 @@ docker logs -f scheduler
 | `BETTER_AUTH_URL` / `WEB_APP_URL` | Public URLs for OAuth and CORS |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth |
 
-### Scheduler (on execution Droplet)
+### Scheduler (DaemonSet on KVM nodes or Droplet)
 
 | Variable | Description |
 | --- | --- |
-| `ORCHESTRATOR_URL` | `http://<orchestrator-lb-private-ip>:9090` |
+| `ORCHESTRATOR_URL` | `http://devin-orchestrator.devin-system.svc:9090` (in-cluster) or LB private IP (Path B) |
+| `SCHEDULER_HOST_NAME` | Kubernetes node name — pins sandboxes to the local firecracker-host (Path A) |
 | `DEFAULT_AGENT` | `mock`, `cursor`, or `claude` |
-| `CURSOR_API_KEY` / `ANTHROPIC_API_KEY` | Agent credentials (passed into microVMs via runtime) |
 
 ### Orchestrator (in Kubernetes)
 
@@ -620,13 +751,16 @@ docker logs -f scheduler
 | --- | --- |
 | `ORCHESTRATOR_DRY_RUN` | `false` |
 | `ORCHESTRATOR_CONTROLLER_ENABLED` | `true` |
+| `ORCHESTRATOR_NODE_REGISTER_ENABLED` | `true` (Path A) / `false` (Path B) |
+| `FIRECRACKER_NODE_LABEL` | `devin.baby/firecracker-host` |
 | `FIRECRACKER_NAMESPACE` | `devin-firecracker` |
 
-### firecracker-host (on execution Droplet)
+### firecracker-host
 
 | Variable | Description |
 | --- | --- |
 | `FIRECRACKER_DRY_RUN` | `false` |
+| `FIRECRACKER_HOST_NAME` | Node name (Path A) or unique host id (Path B) |
 | `FIRECRACKER_POOL_SIZE` | Warm microVM pool per host |
 | `FIRECRACKER_SNAPSHOT_DIR` | `/var/lib/devin/snapshots` |
 | `FIRECRACKER_HOST_PORT` | `9092` (must match `FirecrackerHost` CR) |
@@ -635,7 +769,9 @@ docker logs -f scheduler
 
 | Field | Description |
 | --- | --- |
-| `spec.address` | `http://<droplet-private-ip>:9092` — HTTP API of firecracker-host |
+| `spec.address` | `http://<host-ip>:9092` — firecracker-host HTTP API |
+| `spec.schedulerAddress` | `http://<host-ip>:9091` — co-located scheduler (auto-set on Path A) |
+| `spec.nodeName` | Kubernetes node name (Path A, auto-set) |
 | `spec.capacity.cpu` | Max vCPUs this host advertises |
 | `spec.capacity.memory` | Max memory (e.g. `16Gi`) |
 
@@ -653,11 +789,9 @@ docker logs -f scheduler
 
 ### Scaling execution capacity
 
-1. Provision a new execution Droplet (§3).
-2. Copy `/var/lib/devin` snapshots or rebuild them.
-3. Start firecracker-host + scheduler.
-4. Apply a new `FirecrackerHost` CR with the Droplet's private IP.
-5. Optionally add the new scheduler to your `SCHEDULER_URL` load balancer.
+**Path A:** label additional KVM workers, copy `/var/lib/devin` snapshots, verify new `FirecrackerHost` CRs appear.
+
+**Path B:** provision a new Droplet (§3), copy snapshots, start containers, apply a new `FirecrackerHost` CR.
 
 ### Troubleshooting
 
@@ -688,43 +822,45 @@ docker logs -f scheduler
 
 ---
 
-## 11. Appendix: in-cluster Firecracker DaemonSet (dev only)
+## 11. Appendix: local dev without KVM
 
-For local experimentation inside a cluster that has KVM-capable nodes, you can apply:
+For dry-run local development, use the legacy scheduler Deployment and sample host:
 
 ```sh
+kubectl apply -f deploy/kubernetes/namespaces.yaml
+kubectl apply -f deploy/kubernetes/crd/
+kubectl apply -f deploy/kubernetes/orchestrator/
 kubectl apply -f deploy/kubernetes/firecracker/daemonset.yaml
 kubectl apply -f deploy/kubernetes/scheduler/deployment.yaml
 kubectl apply -f deploy/kubernetes/firecracker/sample-host.yaml
 ```
 
-This runs privileged `firecracker-host` Pods with `hostNetwork: true`. The sample `FirecrackerHost` CR points at in-cluster DNS. **Not recommended for production** — especially on managed clouds with nested virtualization.
-
-For production, use dedicated execution Droplets and external `FirecrackerHost` CRs as described above.
+Set `FIRECRACKER_DRY_RUN=true` for mock VMs without `/dev/kvm`.
 
 ---
 
 ## Quick apply checklist
 
+### Path A — in-cluster KVM
+
 ```sh
-# ── Execution Droplets (repeat per host) ──
-# 1. Verify /dev/kvm
-# 2. Build snapshots → /var/lib/devin
-# 3. docker run firecracker-host (privileged, host network)
-# 4. docker run scheduler (host network, ORCHESTRATOR_URL → cluster)
-
-# ── Kubernetes ──
-kubectl apply -f deploy/kubernetes/namespaces.yaml
-kubectl apply -f deploy/kubernetes/crd/
-kubectl apply -f deploy/kubernetes/orchestrator/rbac.yaml
-kubectl apply -f deploy/kubernetes/orchestrator/deployment.yaml
-# Expose orchestrator LB for Droplets
-kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
-kubectl apply -f deploy/kubernetes/app/          # postgres, secrets, server, web, ingress
-bun run migrate
-
-# ── Verify ──
+# 1. Build + push images (§1)
+# 2. Snapshots on each KVM worker (A.3)
+kubectl label node <kvm-node> devin.baby/firecracker-host=true
+kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
+# Set images to your registry (A.2)
+# deploy app tier (§5–6), bun run migrate
 kubectl -n devin-firecracker get firecrackerhosts
-curl https://api.yourdomain.com/api/v1/
-# Submit a session from the dashboard
+SCHEDULER_URL=$(kubectl -n devin-firecracker get fch -o jsonpath='{.items[0].spec.schedulerAddress}')
+```
+
+### Path B — external Droplets
+
+```sh
+# 1. Build + push images (§1)
+# 2–3. Snapshots + Droplets (§2–3)
+kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
+kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
+# Expose orchestrator LB for Droplets (§4.4)
+# deploy app tier (§5–6), bun run migrate
 ```

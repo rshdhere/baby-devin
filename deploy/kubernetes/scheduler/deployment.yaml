@@ -1,3 +1,5 @@
+# Legacy single-replica scheduler for local dev or external execution hosts.
+# For in-cluster KVM worker pools, use scheduler/daemonset.yaml instead.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

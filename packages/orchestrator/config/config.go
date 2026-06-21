@@ -15,6 +15,12 @@ type Config struct {
 	FirecrackerHostURL   string
 	RuntimeFallbackURL   string
 	ControllerEnabled    bool
+	NodeRegisterEnabled  bool
+	FirecrackerNodeLabel string
+	FirecrackerHostPort  int
+	SchedulerPort        int
+	DefaultHostCPU       int32
+	DefaultHostMemory    string
 }
 
 func LoadFromEnv() Config {
@@ -27,7 +33,25 @@ func LoadFromEnv() Config {
 		FirecrackerHostURL:   envString("FIRECRACKER_HOST_URL", "http://localhost:9092"),
 		RuntimeFallbackURL:   envString("RUNTIME_URL", "http://localhost:8081"),
 		ControllerEnabled:    envBool("ORCHESTRATOR_CONTROLLER_ENABLED", true),
+		NodeRegisterEnabled:  envBool("ORCHESTRATOR_NODE_REGISTER_ENABLED", true),
+		FirecrackerNodeLabel: envString("FIRECRACKER_NODE_LABEL", "devin.baby/firecracker-host"),
+		FirecrackerHostPort:  envInt("FIRECRACKER_HOST_PORT", 9092),
+		SchedulerPort:        envInt("SCHEDULER_PORT", 9091),
+		DefaultHostCPU:       int32(envInt("FIRECRACKER_DEFAULT_HOST_CPU", 8)),
+		DefaultHostMemory:    envString("FIRECRACKER_DEFAULT_HOST_MEMORY", "16Gi"),
 	}
+}
+
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 func envString(key, fallback string) string {

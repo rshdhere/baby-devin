@@ -13,6 +13,7 @@ import type {
 export interface TaskServiceOptions {
   orchestratorUrl: string;
   runtimeUrl: string;
+  preferredHost?: string;
   defaultAgent?: AgentProvider;
   eventBus?: EventBus;
   queue?: TaskQueue<ScheduleJob>;
@@ -33,12 +34,14 @@ export class TaskService {
   private readonly queue: TaskQueue<ScheduleJob>;
   private readonly orchestratorUrl: string;
   private readonly runtimeUrl: string;
+  private readonly preferredHost?: string;
   private readonly defaultAgent: AgentProvider;
   private workerStarted = false;
 
   constructor(options: TaskServiceOptions) {
     this.orchestratorUrl = options.orchestratorUrl.replace(/\/$/, "");
     this.runtimeUrl = options.runtimeUrl.replace(/\/$/, "");
+    this.preferredHost = options.preferredHost?.trim() || undefined;
     this.defaultAgent = options.defaultAgent ?? resolveDefaultAgent();
     this.eventBus = options.eventBus ?? new EventBus();
     this.queue = options.queue ?? createQueue<ScheduleJob>();
@@ -155,6 +158,9 @@ export class TaskService {
               runtime: runtimeImage,
               cpu: 2,
               memory: "4Gi",
+              ...(this.preferredHost
+                ? { preferredHost: this.preferredHost }
+                : {}),
             },
           }),
         },

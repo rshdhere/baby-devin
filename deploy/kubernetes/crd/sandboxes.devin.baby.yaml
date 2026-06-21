@@ -47,6 +47,9 @@ spec:
                   minimum: 1
                 memory:
                   type: string
+                preferredHost:
+                  type: string
+                  description: Pin sandbox provisioning to a FirecrackerHost name or node name.
                 image:
                   type: string
                   description: Deprecated; use runtime to select a snapshot-backed image.

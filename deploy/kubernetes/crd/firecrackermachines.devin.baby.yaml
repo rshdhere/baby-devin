@@ -49,6 +49,9 @@ spec:
                   minimum: 1
                 memory:
                   type: string
+                preferredHost:
+                  type: string
+                  description: Pin VM provisioning to a FirecrackerHost name or node name.
                 host:
                   type: string
             status:

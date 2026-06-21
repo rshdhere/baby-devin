@@ -16,6 +16,13 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        devin.baby/firecracker-host: "true"
+      tolerations:
+        - key: devin.baby/firecracker-host
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       containers:
         - name: firecracker-host
           image: devin-firecracker-host:latest
@@ -63,6 +70,8 @@ spec:
             - name: devin-cni
               mountPath: /etc/cni/conf.d
               readOnly: true
+            - name: dev-kvm
+              mountPath: /dev/kvm
       volumes:
         - name: devin-lib
           hostPath:
@@ -71,6 +80,10 @@ spec:
         - name: devin-cni
           configMap:
             name: devin-firecracker-cni
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
 ---
 apiVersion: v1
 kind: ConfigMap

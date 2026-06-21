@@ -107,9 +107,9 @@ devin/
 | Namespace | Workloads |
 | --- | --- |
 | `devin-app` | web, server |
-| `devin-system` | scheduler, orchestrator |
+| `devin-system` | orchestrator |
 | `devin-sandboxes` | Sandbox + FirecrackerMachine CRs |
-| `devin-firecracker` | FirecrackerHost CRs, firecracker-host DaemonSet |
+| `devin-firecracker` | firecracker-host DaemonSet, scheduler DaemonSet, FirecrackerHost CRs |
 
 ### Runtime supervisor API
 
@@ -194,15 +194,19 @@ curl -N http://localhost:9091/api/v1/tasks/{taskId}/events
 
 ## Kubernetes deploy
 
+Two bundles — see `deployment.md` for full details:
+
 ```sh
-kubectl apply -f deploy/kubernetes/namespaces.yaml
-kubectl apply -f deploy/kubernetes/crd/
-kubectl apply -f deploy/kubernetes/firecracker/
-kubectl apply -f deploy/kubernetes/orchestrator/
-kubectl apply -f deploy/kubernetes/scheduler/
+# Path A: in-cluster KVM worker pool (bare metal / self-managed)
+kubectl label node <kvm-node> devin.baby/firecracker-host=true
+kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
+
+# Path B: external execution Droplets (managed cloud)
+kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
+kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
 ```
 
-Set on server: `SCHEDULER_URL=http://devin-scheduler.devin-system.svc:9091`
+Set on server: `SCHEDULER_URL` to `spec.schedulerAddress` from a registered `FirecrackerHost` (Path A) or your Droplet scheduler URL (Path B).
 
 ## Scripts
 

@@ -75,6 +75,13 @@ func main() {
 				slog.Error("failed to register firecracker host controller", "error", err)
 				os.Exit(1)
 			}
+			if err := (&reconcile.NodePoolReconciler{
+				Client: mgr.GetClient(),
+				Config: cfg,
+			}).SetupWithManager(mgr); err != nil {
+				slog.Error("failed to register node pool controller", "error", err)
+				os.Exit(1)
+			}
 		}
 
 		go func() {

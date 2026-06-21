@@ -68,11 +68,12 @@ func (r *SandboxReconciler) ensureMachine(ctx context.Context, sandbox *devinv1.
 			return err
 		}
 		machine.Spec = devinv1.FirecrackerMachineSpec{
-			SandboxName: sandbox.Name,
-			TaskID:      sandbox.Spec.TaskID,
-			Runtime:     sandbox.Spec.Runtime,
-			CPU:         sandbox.Spec.CPU,
-			Memory:      sandbox.Spec.Memory,
+			SandboxName:   sandbox.Name,
+			TaskID:        sandbox.Spec.TaskID,
+			Runtime:       sandbox.Spec.Runtime,
+			CPU:           sandbox.Spec.CPU,
+			Memory:        sandbox.Spec.Memory,
+			PreferredHost: sandbox.Spec.PreferredHost,
 		}
 		return nil
 	})

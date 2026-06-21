@@ -11,8 +11,10 @@ type HostCapacity struct {
 }
 
 type FirecrackerHostSpec struct {
-	Address  string       `json:"address"`
-	Capacity HostCapacity `json:"capacity"`
+	Address           string       `json:"address"`
+	Capacity          HostCapacity `json:"capacity"`
+	NodeName          string       `json:"nodeName,omitempty"`
+	SchedulerAddress  string       `json:"schedulerAddress,omitempty"`
 }
 
 type FirecrackerHostStatus struct {

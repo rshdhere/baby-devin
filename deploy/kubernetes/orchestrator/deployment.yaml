@@ -38,6 +38,18 @@ spec:
               value: devin-app
             - name: SANDBOX_DEFAULT_RUNTIME
               value: nextjs
+            - name: ORCHESTRATOR_NODE_REGISTER_ENABLED
+              value: "true"
+            - name: FIRECRACKER_NODE_LABEL
+              value: devin.baby/firecracker-host
+            - name: FIRECRACKER_HOST_PORT
+              value: "9092"
+            - name: SCHEDULER_PORT
+              value: "9091"
+            - name: FIRECRACKER_DEFAULT_HOST_CPU
+              value: "8"
+            - name: FIRECRACKER_DEFAULT_HOST_MEMORY
+              value: 16Gi
           readinessProbe:
             httpGet:
               path: /health
