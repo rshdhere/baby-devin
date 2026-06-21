@@ -194,19 +194,19 @@ curl -N http://localhost:9091/api/v1/tasks/{taskId}/events
 
 ## Kubernetes deploy
 
-Production on **DigitalOcean** uses Path B (DOKS + external execution Droplets + managed Postgres). See `deployment.md` for full details:
+Production on **AWS** uses Path B (EKS + external EC2 execution hosts + Neon). See `deployment.md` for full details:
 
 ```sh
-# Path B: DOKS control plane + external execution Droplets (recommended)
+# Path B: EKS control plane + external EC2 execution hosts (recommended)
 kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
 kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
 
-# Path A: in-cluster KVM worker pool (self-managed K8s only — not DOKS)
+# Path A: in-cluster KVM worker pool (self-managed K8s only — not EKS)
 kubectl label node <kvm-node> devin.baby/firecracker-host=true
 kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
 ```
 
-Set on server: `DATABASE_URL` to your managed Postgres connection string; `SCHEDULER_URL` to your execution Droplet scheduler URL (`http://<private-ip>:9091`).
+Set on server: `DATABASE_URL` to your Neon connection string; `SCHEDULER_URL` to your execution host scheduler URL (`http://<private-ip>:9091`).
 
 ## Scripts
 

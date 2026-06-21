@@ -1,5 +1,5 @@
-# Register dedicated execution Droplets (outside the cluster) with the orchestrator.
-# Apply one FirecrackerHost per Droplet. Replace addresses and capacity with real values.
+# Register dedicated EC2 execution hosts (outside the cluster) with the orchestrator.
+# Apply one FirecrackerHost per host. Replace addresses and capacity with real values.
 #
 #   kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
 #
@@ -9,7 +9,7 @@ metadata:
   name: fc-prod-01
   namespace: devin-firecracker
 spec:
-  address: http://10.116.0.12:9092
+  address: http://10.0.12.45:9092
   capacity:
     cpu: 8
     memory: 16Gi
@@ -20,7 +20,7 @@ metadata:
   name: fc-prod-02
   namespace: devin-firecracker
 spec:
-  address: http://10.116.0.13:9092
+  address: http://10.0.12.46:9092
   capacity:
     cpu: 8
     memory: 16Gi

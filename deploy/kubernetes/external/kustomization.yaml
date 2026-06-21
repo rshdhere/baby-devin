@@ -1,9 +1,9 @@
-# External execution hosts (recommended for DigitalOcean / managed cloud).
+# External execution hosts (recommended for AWS EKS / managed cloud).
 #
 # Apply order:
 #   kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
 #   kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
-#   Run firecracker-host + scheduler on each Droplet (see deployment.md)
+#   Run firecracker-host + scheduler on each EC2 host (see deployment.md)
 #
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

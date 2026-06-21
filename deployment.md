@@ -4,33 +4,34 @@ This guide covers production deployment of devin.baby: web, API server, orchestr
 
 Unlike generic container sandboxing (Kata Containers + containerd + devmapper), devin.baby uses **golden snapshot pools** and a **custom runtime supervisor** inside each microVM. We borrow the **dedicated KVM worker pool** idea from Kata/Firecracker-on-K8s guides — labeled nodes, co-located daemons, host-local networking — without adopting Kata itself.
 
-## Recommended production stack (DigitalOcean)
+## Recommended production stack (AWS)
 
-Our target production layout on DigitalOcean:
+Our target production layout on AWS:
 
 | Component | Service |
 | --- | --- |
-| Control plane | **DOKS** — web, API server, orchestrator |
-| Execution plane | **CPU-Optimized Droplets** in the same VPC (hardware KVM; not on DOKS workers) |
-| Database | **DigitalOcean Managed Postgres** (or Neon, RDS, etc.) — not in-cluster |
-| Images | **DO Container Registry** |
+| Control plane | **EKS** — web, API server, orchestrator |
+| Execution plane | **EC2 compute-optimized or bare-metal instances** in the same VPC (hardware KVM; not on EKS workers) |
+| Database | **Neon** (serverless Postgres) — not in-cluster |
+| Images | **Amazon ECR** |
+| Ingress / TLS | **AWS Load Balancer Controller** + ACM (or cert-manager) |
 
-Follow **Path B** below. Provision managed Postgres first, point `DATABASE_URL` at the provider connection string, then deploy DOKS + external execution Droplets.
+Follow **Path B** below. Provision a Neon project first, point `DATABASE_URL` at the connection string, then deploy EKS + external execution hosts.
 
 ## Choose a deployment path
 
 | Path | When to use | Manifest bundle |
 | --- | --- | --- |
-| **B — External execution hosts** | **Recommended** — DOKS, GKE standard, EKS, and other managed K8s without nested KVM | `kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone` + Droplets |
-| **A — In-cluster KVM pool** | Self-managed K8s with dedicated `/dev/kvm` worker nodes (not DOKS) | `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone` |
+| **B — External execution hosts** | **Recommended** — EKS, GKE standard, and other managed K8s without nested KVM | `kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone` + EC2 hosts |
+| **A — In-cluster KVM pool** | Self-managed K8s with dedicated `/dev/kvm` worker nodes (not EKS) | `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone` |
 
 Both paths share the same control-plane CRDs (`Sandbox`, `FirecrackerMachine`, `FirecrackerHost`) and the same app tier (server, web). Postgres is **external** in production (managed provider).
 
 ---
 
-## Path B — External execution hosts (recommended for DigitalOcean)
+## Path B — External execution hosts (recommended for AWS / EKS)
 
-When your Kubernetes workers lack hardware KVM (typical on DOKS/GKE/EKS), run `firecracker-host` + `scheduler` on **dedicated Linux VMs outside the cluster** and register them with `FirecrackerHost` CRs.
+When your Kubernetes workers lack hardware KVM (typical on EKS/GKE), run `firecracker-host` + `scheduler` on **dedicated Linux VMs outside the cluster** and register them with `FirecrackerHost` CRs.
 
 ```text
                          ┌─────────────────────────────────────┐
@@ -44,13 +45,13 @@ When your Kubernetes workers lack hardware KVM (typical on DOKS/GKE/EKS), run `f
                                         │ orchestrator → :9092
                     VPC / private net   │
          ┌──────────────────────────────┼──────────────────────────────┐
-         │  Execution Droplet A         │    Execution Droplet B        │
+         │  Execution host A (EC2)      │    Execution host B (EC2)     │
          │  firecracker-host :9092      │    firecracker-host :9092     │
          │  scheduler        :9091      │    scheduler        :9091     │
          │  microVMs 192.168.127.x      │    microVMs 192.168.127.x   │
          └──────────────────────────────┴──────────────────────────────┘
 
-         Managed Postgres (DigitalOcean, Neon, etc.) — outside the cluster
+         Neon (serverless Postgres) — outside the cluster
 ```
 
 Deploy the control plane:
@@ -60,9 +61,9 @@ kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsN
 kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
 ```
 
-Set `ORCHESTRATOR_NODE_REGISTER_ENABLED=false` is applied automatically by the external kustomize overlay. Register each Droplet manually in `external-host.yaml`.
+Set `ORCHESTRATOR_NODE_REGISTER_ENABLED=false` is applied automatically by the external kustomize overlay. Register each execution host manually in `external-host.yaml`.
 
-See [§2–§4 below](#2-prepare-firecracker-snapshots-on-execution-droplets) for Droplet provisioning, snapshot prep, and firewall rules.
+See [§2–§4 below](#2-prepare-firecracker-snapshots-on-execution-hosts) for EC2 provisioning, snapshot prep, and security group rules.
 
 ---
 
@@ -105,7 +106,7 @@ scheduler → runtime inside microVM (host-local CNI)
 ### A.1 Prerequisites
 
 - Kubernetes **1.28+** with at least one worker that has **`/dev/kvm`** (hardware virtualization).
-- Do **not** use nested virt on managed-cloud worker nodes (DOKS, etc.) — use Path B instead.
+- Do **not** use nested virt on managed-cloud worker nodes (EKS, etc.) — use Path B instead.
 - `kubectl`, ingress + TLS, container registry.
 - Fast local disk on KVM workers for `/var/lib/devin`.
 
@@ -211,31 +212,31 @@ kubectl -n devin-sandboxes get sandboxes,firecrackermachines -w
 
 ### Kubernetes cluster
 
-- Kubernetes **1.28+** (DOKS recommended for production).
+- Kubernetes **1.28+** (EKS recommended for production).
 - `kubectl` configured against your target cluster.
-- An ingress controller and TLS (cert-manager recommended).
-- A container registry (DigitalOcean Container Registry recommended).
+- An ingress controller and TLS (AWS Load Balancer Controller + ACM, or cert-manager).
+- A container registry (Amazon ECR recommended).
 
-### Execution Droplets (one or more)
+### Execution hosts (one or more EC2 instances)
 
-Each execution Droplet is a dedicated Linux VM **outside** the cluster (e.g. DigitalOcean CPU-Optimized Droplet, EC2 instance):
+Each execution host is a dedicated Linux VM **outside** the cluster (e.g. EC2 compute-optimized or bare-metal instance):
 
 | Requirement | Notes |
 | --- | --- |
-| **KVM** | `/dev/kvm` must exist — real hardware virt, not nested virt inside DOKS workers |
+| **KVM** | `/dev/kvm` must exist — real hardware virt, not nested virt inside EKS workers |
 | **x86_64** | Current snapshot tooling targets amd64 |
 | **CPU / RAM** | Size for warm pool + concurrent sandboxes (e.g. 8 vCPU / 16 GB+ per host) |
-| **Disk** | Fast local disk for `/var/lib/devin` snapshots and VM state |
+| **Disk** | Fast local disk for `/var/lib/devin` snapshots and VM state (instance store or high-IOPS EBS) |
 | **Network** | Reachable from orchestrator Pods on `:9092`; can reach orchestrator on `:9090` |
 | **Outbound internet** | Git clone, GitHub API, agent API calls from microVMs |
 
-On **DigitalOcean**: use standalone CPU-Optimized Droplets in the **same VPC** as your DOKS cluster. Do not run Firecracker on DOKS worker nodes — nested virtualization is unsupported for production and performs poorly.
+On **AWS**: use EC2 instances in the **same VPC** as your EKS cluster (e.g. `c7i.2xlarge` with nested virtualization, or bare-metal types like `c5.metal` for best KVM performance). Do not run Firecracker on EKS worker nodes — nested virtualization is unsupported for production and performs poorly.
 
 ### External services
 
 | Service | Purpose |
 | --- | --- |
-| **Managed Postgres 16+** | Auth, dashboard settings, GitHub token storage (DigitalOcean Managed Postgres, Neon, RDS, etc.) |
+| **Managed Postgres 16+** | Auth, dashboard settings, GitHub token storage (**Neon** recommended) |
 | Resend (or SMTP) | Magic-link and verification emails |
 | GitHub OAuth app | Sign-in + repo access for sessions |
 | Cursor / Anthropic API keys | Real agent execution (`cursor`, `claude`) |
@@ -254,8 +255,11 @@ On **DigitalOcean**: use standalone CPU-Optimized Droplets in the **same VPC** a
 Set your registry prefix:
 
 ```sh
-export REGISTRY=registry.digitalocean.com/your-registry   # or docker.io/youruser
+export REGISTRY=123456789012.dkr.ecr.us-east-1.amazonaws.com/devin   # or docker.io/youruser
 export TAG=latest
+
+# Authenticate Docker to ECR (once per session)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com
 ```
 
 ### App images
@@ -293,7 +297,7 @@ EOF
 docker push $REGISTRY/devin-orchestrator:$TAG
 ```
 
-### Scheduler + firecracker-host (run on execution Droplets)
+### Scheduler + firecracker-host (run on execution hosts)
 
 ```sh
 docker build -t $REGISTRY/devin-scheduler:$TAG -f - . <<'EOF'
@@ -321,7 +325,7 @@ Update image references in `deploy/kubernetes/` before applying in-cluster manif
 
 ## 2. Prepare Firecracker snapshots on execution hosts
 
-On each execution Droplet (or a build machine, then copy artifacts to every host):
+On each execution host (or a build machine, then copy artifacts to every host):
 
 ```sh
 # Runtime supervisor binary
@@ -355,20 +359,21 @@ Verify layout:
 
 See `runtime-images/README.md` for all supported runtimes.
 
-**DigitalOcean tip:** after building on one Droplet, snapshot the Droplet image or sync `/var/lib/devin` to additional execution hosts with `rsync` or DO Spaces — avoid rebuilding snapshots on every machine.
+**AWS tip:** after building on one EC2 instance, create an AMI from it or sync `/var/lib/devin` to additional execution hosts with `rsync` or S3 — avoid rebuilding snapshots on every machine.
 
 ---
 
-## 3. Provision execution Droplets
+## 3. Provision execution hosts (EC2)
 
-### 3.1 Create the Droplet
+### 3.1 Launch the EC2 instance
 
-Example (DigitalOcean):
+Example (AWS):
 
-- **Image:** Ubuntu 24.04 LTS
-- **Size:** CPU-Optimized 8 vCPU / 16 GB RAM (adjust for pool size)
-- **VPC:** same VPC as your DOKS cluster
-- **Firewall:** see [Network and firewall rules](#network-and-firewall-rules) below
+- **AMI:** Ubuntu 24.04 LTS
+- **Instance type:** `c7i.2xlarge` (compute-optimized) or `c5.metal` (bare metal for best KVM)
+- **VPC / subnet:** same VPC as your EKS cluster (private subnet recommended)
+- **Security groups:** see [Network and security group rules](#45-network-and-security-group-rules) below
+- **IAM instance profile:** optional — attach a role with `ecr:GetAuthorizationToken` and `ecr:BatchGetImage` for pulling from ECR without long-lived credentials
 
 SSH in and verify KVM:
 
@@ -423,11 +428,11 @@ curl -s http://127.0.0.1:9092/health
 curl -s http://127.0.0.1:9092/v1/status
 ```
 
-### 3.4 Run scheduler on the same Droplet
+### 3.4 Run scheduler on the same host
 
 The scheduler must run **on the same machine** as firecracker-host so it can reach microVM runtime URLs (`http://192.168.127.x:8080`).
 
-Point it at the in-cluster orchestrator. Use the orchestrator's **VPC-private** endpoint (see [Expose orchestrator to execution Droplets](#expose-orchestrator-to-execution-droplets)).
+Point it at the in-cluster orchestrator. Use the orchestrator's **VPC-private** endpoint (see [Expose orchestrator to execution hosts](#44-expose-orchestrator-to-execution-hosts)).
 
 ```sh
 docker run -d --name scheduler --restart unless-stopped \
@@ -446,14 +451,14 @@ Health check:
 curl -s http://127.0.0.1:9091/health
 ```
 
-### 3.5 Multiple execution Droplets
+### 3.5 Multiple execution hosts
 
 Repeat §3.1–3.4 for each host. Give each a unique `FIRECRACKER_HOST_NAME` (e.g. `fc-prod-01`, `fc-prod-02`). Each runs its own scheduler instance.
 
 Load-balance schedulers from the API server with one of:
 
-- **Single scheduler URL** — point `SCHEDULER_URL` at one Droplet's `:9091` (simplest).
-- **External TCP load balancer** — health-check `:9091/health`, round-robin across Droplets.
+- **Single scheduler URL** — point `SCHEDULER_URL` at one host's `:9091` (simplest).
+- **Internal NLB** — health-check `:9091/health`, round-robin across hosts.
 - **DNS round-robin** — less ideal; no health awareness.
 
 ---
@@ -486,7 +491,7 @@ FIRECRACKER_NAMESPACE=devin-firecracker
 
 ### 4.3 Register external execution hosts (Path B only)
 
-Create one CR per execution Droplet. Use the Droplet's **VPC private IP** (reachable from orchestrator Pods):
+Create one CR per execution host. Use the host's **VPC private IP** (reachable from orchestrator Pods):
 
 ```yaml
 # deploy/kubernetes/firecracker/external-host.yaml
@@ -496,7 +501,7 @@ metadata:
   name: fc-prod-01
   namespace: devin-firecracker
 spec:
-  address: http://10.116.0.12:9092    # execution Droplet private IP
+  address: http://10.0.12.45:9092    # execution host private IP
   capacity:
     cpu: 8
     memory: 16Gi
@@ -507,7 +512,7 @@ metadata:
   name: fc-prod-02
   namespace: devin-firecracker
 spec:
-  address: http://10.116.0.13:9092
+  address: http://10.0.12.46:9092
   capacity:
     cpu: 8
     memory: 16Gi
@@ -524,20 +529,20 @@ Verify from inside the cluster:
 
 ```sh
 kubectl -n devin-system run curl-test --rm -it --image=curlimages/curl -- \
-  curl -s http://10.116.0.12:9092/v1/status
+  curl -s http://10.0.12.45:9092/v1/status
 ```
 
-### 4.4 Expose orchestrator to execution Droplets
+### 4.4 Expose orchestrator to execution hosts
 
-Orchestrator must be reachable from execution Droplets on port **9090**. Options:
+Orchestrator must be reachable from execution hosts on port **9090**. Options:
 
 | Method | When to use |
 | --- | --- |
-| **Internal LoadBalancer Service** | DOKS: `type: LoadBalancer` with DO annotation for VPC-only LB |
+| **Internal NLB Service** | EKS: `type: LoadBalancer` with AWS internal NLB annotations |
 | **NodePort + VPC IP** | Small clusters; pin to a stable node private IP |
 | **kubectl port-forward** | Local testing only |
 
-Example internal LoadBalancer (DigitalOcean):
+Example internal NLB (AWS):
 
 ```yaml
 apiVersion: v1
@@ -546,7 +551,9 @@ metadata:
   name: devin-orchestrator-lb
   namespace: devin-system
   annotations:
-    service.beta.kubernetes.io/do-loadbalancer-type: "REGIONAL_NETWORK"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
 spec:
   type: LoadBalancer
   selector:
@@ -556,49 +563,49 @@ spec:
       targetPort: http
 ```
 
-Set `ORCHESTRATOR_URL` on each execution Droplet to this LB's private IP.
+Set `ORCHESTRATOR_URL` on each execution host to this NLB's private DNS name or IP.
 
-### 4.5 Network and firewall rules
+### 4.5 Network and security group rules
 
-**Execution Droplet firewall (inbound):**
+**Execution host security group (inbound):**
 
 | Source | Port | Purpose |
 | --- | --- | --- |
-| DOKS cluster VPC CIDR | `9092` | orchestrator → firecracker-host API |
-| DOKS cluster VPC CIDR | `9091` | server → scheduler (if scheduler on this Droplet) |
-| Your admin IP | `22` | SSH |
+| EKS cluster VPC CIDR / node security group | `9092` | orchestrator → firecracker-host API |
+| EKS cluster VPC CIDR / node security group | `9091` | server → scheduler (if scheduler on this host) |
+| Your admin IP / bastion SG | `22` | SSH |
 
-**Execution Droplet firewall (outbound):** allow HTTPS (443) for GitHub, agent APIs, and container registry pulls.
+**Execution host security group (outbound):** allow HTTPS (443) for GitHub, agent APIs, and ECR pulls.
 
-**DOKS / orchestrator:** allow egress to execution Droplet VPC CIDR on `9092`.
+**EKS / orchestrator:** allow egress to execution host VPC CIDR on `9092`.
 
-MicroVM runtime ports (`192.168.127.x:8080`) stay host-local — do not expose them in the cloud firewall.
+MicroVM runtime ports (`192.168.127.x:8080`) stay host-local — do not expose them in the security group.
 
 ---
 
-## 5. Database (managed Postgres)
+## 5. Database (Neon)
 
-Use a **managed Postgres** provider in production. Do not run Postgres in the Kubernetes cluster.
+Use **Neon** for production Postgres. Do not run Postgres in the Kubernetes cluster.
 
-### DigitalOcean Managed Postgres
+### Neon Postgres
 
-1. Create a Postgres 16 cluster in the **same region/VPC** as DOKS.
-2. Add the DOKS cluster as a **trusted source** (or allow the VPC CIDR).
-3. Copy the connection string from the DO control panel.
+1. Create a [Neon](https://neon.tech) project in a region close to your EKS cluster (e.g. `us-east-1`).
+2. Create a database (e.g. `devin`) and copy the **pooled** or **direct** connection string from the Neon console.
+3. Ensure EKS nodes and your migration workstation can reach Neon over HTTPS/TLS (outbound `5432` to `*.neon.tech`).
 4. Run migrations from your workstation or a one-off Job:
 
 ```sh
-export DATABASE_URL='postgres://user:pass@your-db.db.ondigitalocean.com:25060/devin?sslmode=require'
+export DATABASE_URL='postgres://user:pass@ep-xxx.us-east-1.aws.neon.tech/devin?sslmode=require'
 bun run migrate
 psql "$DATABASE_URL" -f packages/drizzle/drizzle/0001_github_settings.sql
 ```
 
-Set `DATABASE_URL` in the `devin-server` secret (see [§6](#6-deploy-api-server-and-web)). Use the provider hostname — not an in-cluster service name.
+Set `DATABASE_URL` in the `devin-server` secret (see [§6](#6-deploy-api-server-and-web)). Use the Neon hostname — not an in-cluster service name.
 
 <details>
 <summary>Appendix: in-cluster Postgres (local/dev only)</summary>
 
-For local experimentation only — not for production on DigitalOcean:
+For local experimentation only — not for production on AWS:
 
 ```yaml
 # deploy/kubernetes/app/postgres.yaml
@@ -685,7 +692,7 @@ psql "$DATABASE_URL" -f packages/drizzle/drizzle/0001_github_settings.sql
 Set `SCHEDULER_URL` to your scheduler endpoint:
 
 - **Path A:** `spec.schedulerAddress` from the registered `FirecrackerHost` CR
-- **Path B:** `http://<execution-droplet-private-ip>:9091` or load balancer URL
+- **Path B:** `http://<execution-host-private-ip>:9091` or internal NLB URL
 
 ```yaml
 # deploy/kubernetes/app/secrets.yaml
@@ -700,8 +707,8 @@ stringData:
   BETTER_AUTH_URL: "https://api.yourdomain.com"
   WEB_APP_URL: "https://yourdomain.com"
   PORT: "8080"
-  DATABASE_URL: "postgres://user:pass@your-db.db.ondigitalocean.com:25060/devin?sslmode=require"
-  SCHEDULER_URL: "http://10.116.0.12:9091"
+  DATABASE_URL: "postgres://user:pass@ep-xxx.us-east-1.aws.neon.tech/devin?sslmode=require"
+  SCHEDULER_URL: "http://10.0.12.45:9091"
   RESEND_API_KEY: ""
   RESEND_FROM_EMAIL: "Devin <onboarding@yourdomain.com>"
   RESEND_STRICT: "true"
@@ -737,7 +744,7 @@ kubectl -n devin-system logs deploy/devin-orchestrator --tail=50
 kubectl -n devin-firecracker get firecrackerhosts
 ```
 
-### On execution Droplet
+### On execution host
 
 ```sh
 curl -s http://127.0.0.1:9092/v1/status
@@ -754,7 +761,7 @@ Watch sandbox reconciliation:
 kubectl -n devin-sandboxes get sandboxes,firecrackermachines -w
 ```
 
-On the execution Droplet:
+On the execution host:
 
 ```sh
 docker logs -f firecracker-host
@@ -769,12 +776,12 @@ docker logs -f scheduler
 
 | Variable | Description |
 | --- | --- |
-| `SCHEDULER_URL` | `http://<execution-droplet-private-ip>:9091` or LB URL |
+| `SCHEDULER_URL` | `http://<execution-host-private-ip>:9091` or NLB URL |
 | `DATABASE_URL` | Postgres connection string |
 | `BETTER_AUTH_URL` / `WEB_APP_URL` | Public URLs for OAuth and CORS |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth |
 
-### Scheduler (DaemonSet on KVM nodes or Droplet)
+### Scheduler (DaemonSet on KVM nodes or EC2 host)
 
 | Variable | Description |
 | --- | --- |
@@ -819,7 +826,7 @@ docker logs -f scheduler
 ### Upgrades
 
 1. Build and push new images with a version tag.
-2. Roll execution Droplets: `docker pull` + recreate `firecracker-host` and `scheduler` containers (snapshot-compatible changes only for host).
+2. Roll execution hosts: `docker pull` + recreate `firecracker-host` and `scheduler` containers (snapshot-compatible changes only for host).
 3. Roll in-cluster: `kubectl -n devin-app rollout restart deploy/devin-server deploy/devin-web`
 4. Roll orchestrator: `kubectl -n devin-system rollout restart deploy/devin-orchestrator`
 5. Run DB migrations: `bun run migrate`
@@ -828,34 +835,35 @@ docker logs -f scheduler
 
 **Path A:** label additional KVM workers, copy `/var/lib/devin` snapshots, verify new `FirecrackerHost` CRs appear.
 
-**Path B:** provision a new Droplet (§3), copy snapshots, start containers, apply a new `FirecrackerHost` CR.
+**Path B:** provision a new EC2 instance (§3), copy snapshots, start containers, apply a new `FirecrackerHost` CR.
 
 ### Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
 | `no firecracker host with capacity` | `kubectl get firecrackerhosts -n devin-firecracker`; host `/v1/status` from orchestrator Pod |
-| Orchestrator cannot reach Droplet | VPC, firewall rules, `spec.address` uses private IP |
-| Scheduler cannot reach orchestrator | `ORCHESTRATOR_URL`, internal LB health |
-| Server cannot reach scheduler | `SCHEDULER_URL`, firewall `:9091` from cluster to Droplet |
-| Tasks stuck after sandbox created | Scheduler logs on Droplet; runtime health on `192.168.127.x` (must be same host) |
-| Snapshot restore failures | `/var/lib/devin/snapshots/<runtime>/` on Droplet, `/dev/kvm` |
+| Orchestrator cannot reach execution host | VPC, security groups, `spec.address` uses private IP |
+| Scheduler cannot reach orchestrator | `ORCHESTRATOR_URL`, internal NLB health |
+| Server cannot reach scheduler | `SCHEDULER_URL`, security group `:9091` from cluster to host |
+| Tasks stuck after sandbox created | Scheduler logs on host; runtime health on `192.168.127.x` (must be same host) |
+| Snapshot restore failures | `/var/lib/devin/snapshots/<runtime>/` on host, `/dev/kvm` |
 | GitHub sessions fail | OAuth callback URL, `repo` scope |
 
 ---
 
-## 10. DigitalOcean quick reference
+## 10. AWS quick reference
 
-| Component | DO product |
+| Component | AWS service |
 | --- | --- |
-| Kubernetes | DOKS (app + orchestrator only) |
-| Execution hosts | CPU-Optimized Droplets, same VPC as DOKS |
-| Registry | DO Container Registry |
-| Database | Managed Postgres (DigitalOcean Managed Postgres, Neon, etc.) |
-| Object storage | DO Spaces — optional for snapshot distribution to new Droplets |
-| Firewall | DO Cloud Firewall per Droplet + DOKS |
+| Kubernetes | EKS (app + orchestrator only) |
+| Execution hosts | EC2 compute-optimized or bare-metal instances, same VPC as EKS |
+| Registry | Amazon ECR |
+| Database | Neon (serverless Postgres) |
+| Object storage | Amazon S3 — optional for snapshot distribution to new hosts |
+| Load balancing | Internal NLB (orchestrator), ALB (ingress via AWS Load Balancer Controller) |
+| Firewall | VPC security groups per EC2 host + EKS node groups |
 
-**Do not** run Firecracker on DOKS worker nodes. Use dedicated Droplets with hardware KVM.
+**Do not** run Firecracker on EKS worker nodes. Use dedicated EC2 instances with hardware KVM.
 
 ---
 
@@ -891,13 +899,13 @@ kubectl -n devin-firecracker get firecrackerhosts
 SCHEDULER_URL=$(kubectl -n devin-firecracker get fch -o jsonpath='{.items[0].spec.schedulerAddress}')
 ```
 
-### Path B — external Droplets
+### Path B — external EC2 hosts
 
 ```sh
 # 1. Build + push images (§1)
-# 2–3. Snapshots + Droplets (§2–3)
+# 2–3. Snapshots + EC2 hosts (§2–3)
 kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
 kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
-# Expose orchestrator LB for Droplets (§4.4)
+# Expose orchestrator internal NLB for execution hosts (§4.4)
 # deploy app tier (§5–6), bun run migrate
 ```
