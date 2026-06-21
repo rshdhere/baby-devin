@@ -1,28 +1,79 @@
 # Deploying devin.baby on Kubernetes
 
-This guide covers production deployment of devin.baby: web, API server, Postgres, orchestrator, and Firecracker microVM sandboxes.
+This guide covers production deployment of devin.baby: web, API server, orchestrator, and Firecracker microVM sandboxes.
 
 Unlike generic container sandboxing (Kata Containers + containerd + devmapper), devin.baby uses **golden snapshot pools** and a **custom runtime supervisor** inside each microVM. We borrow the **dedicated KVM worker pool** idea from Kata/Firecracker-on-K8s guides — labeled nodes, co-located daemons, host-local networking — without adopting Kata itself.
+
+## Recommended production stack (DigitalOcean)
+
+Our target production layout on DigitalOcean:
+
+| Component | Service |
+| --- | --- |
+| Control plane | **DOKS** — web, API server, orchestrator |
+| Execution plane | **CPU-Optimized Droplets** in the same VPC (hardware KVM; not on DOKS workers) |
+| Database | **DigitalOcean Managed Postgres** (or Neon, RDS, etc.) — not in-cluster |
+| Images | **DO Container Registry** |
+
+Follow **Path B** below. Provision managed Postgres first, point `DATABASE_URL` at the provider connection string, then deploy DOKS + external execution Droplets.
 
 ## Choose a deployment path
 
 | Path | When to use | Manifest bundle |
 | --- | --- | --- |
-| **A — In-cluster KVM pool** | Bare-metal or self-managed K8s with `/dev/kvm` worker nodes | `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone` |
-| **B — External execution hosts** | Managed K8s without nested KVM (DOKS, GKE standard, EKS) | `kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone` + Droplets |
+| **B — External execution hosts** | **Recommended** — DOKS, GKE standard, EKS, and other managed K8s without nested KVM | `kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone` + Droplets |
+| **A — In-cluster KVM pool** | Self-managed K8s with dedicated `/dev/kvm` worker nodes (not DOKS) | `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone` |
 
-Both paths share the same control-plane CRDs (`Sandbox`, `FirecrackerMachine`, `FirecrackerHost`) and the same app tier (Postgres, server, web).
+Both paths share the same control-plane CRDs (`Sandbox`, `FirecrackerMachine`, `FirecrackerHost`) and the same app tier (server, web). Postgres is **external** in production (managed provider).
 
 ---
 
-## Path A — In-cluster KVM worker pool (recommended for bare metal)
+## Path B — External execution hosts (recommended for DigitalOcean)
+
+When your Kubernetes workers lack hardware KVM (typical on DOKS/GKE/EKS), run `firecracker-host` + `scheduler` on **dedicated Linux VMs outside the cluster** and register them with `FirecrackerHost` CRs.
+
+```text
+                         ┌─────────────────────────────────────┐
+                         │           Kubernetes cluster         │
+                         │  devin-app: web, server              │
+                         │  devin-system: orchestrator          │
+                         │  devin-sandboxes: Sandbox/Machine CRs│
+                         │  devin-firecracker: FirecrackerHost  │
+                         │              CRs only              │
+                         └──────────────┬──────────────────────┘
+                                        │ orchestrator → :9092
+                    VPC / private net   │
+         ┌──────────────────────────────┼──────────────────────────────┐
+         │  Execution Droplet A         │    Execution Droplet B        │
+         │  firecracker-host :9092      │    firecracker-host :9092     │
+         │  scheduler        :9091      │    scheduler        :9091     │
+         │  microVMs 192.168.127.x      │    microVMs 192.168.127.x   │
+         └──────────────────────────────┴──────────────────────────────┘
+
+         Managed Postgres (DigitalOcean, Neon, etc.) — outside the cluster
+```
+
+Deploy the control plane:
+
+```sh
+kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
+kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
+```
+
+Set `ORCHESTRATOR_NODE_REGISTER_ENABLED=false` is applied automatically by the external kustomize overlay. Register each Droplet manually in `external-host.yaml`.
+
+See [§2–§4 below](#2-prepare-firecracker-snapshots-on-execution-droplets) for Droplet provisioning, snapshot prep, and firewall rules.
+
+---
+
+## Path A — In-cluster KVM worker pool (self-managed clusters only)
 
 Sandboxes run as Firecracker microVMs with host-local networking (`192.168.127.0/24`). The runtime supervisor is only reachable **from the node running `firecracker-host`**, so the scheduler runs as a **co-located DaemonSet** on the same labeled workers.
 
 ```text
                          ┌──────────────────────────────────────────────┐
                          │              Kubernetes cluster               │
-                         │  devin-app: web, server, postgres            │
+                         │  devin-app: web, server                      │
                          │  devin-system: orchestrator                   │
                          │  devin-sandboxes: Sandbox / Machine CRs       │
                          │  devin-firecracker:                           │
@@ -156,54 +207,18 @@ kubectl -n devin-sandboxes get sandboxes,firecrackermachines -w
 
 ---
 
-## Path B — External execution hosts (managed cloud)
-
-When your Kubernetes workers lack hardware KVM (typical on DOKS/GKE/EKS), run `firecracker-host` + `scheduler` on **dedicated Linux VMs outside the cluster** and register them with `FirecrackerHost` CRs.
-
-```text
-                         ┌─────────────────────────────────────┐
-                         │           Kubernetes cluster         │
-                         │  devin-app: web, server, postgres   │
-                         │  devin-system: orchestrator          │
-                         │  devin-sandboxes: Sandbox/Machine CRs│
-                         │  devin-firecracker: FirecrackerHost  │
-                         │              CRs only              │
-                         └──────────────┬──────────────────────┘
-                                        │ orchestrator → :9092
-                    VPC / private net   │
-         ┌──────────────────────────────┼──────────────────────────────┐
-         │  Execution Droplet A         │    Execution Droplet B        │
-         │  firecracker-host :9092      │    firecracker-host :9092     │
-         │  scheduler        :9091      │    scheduler        :9091     │
-         │  microVMs 192.168.127.x      │    microVMs 192.168.127.x   │
-         └──────────────────────────────┴──────────────────────────────┘
-```
-
-Deploy the control plane:
-
-```sh
-kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
-kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
-```
-
-Set `ORCHESTRATOR_NODE_REGISTER_ENABLED=false` is applied automatically by the external kustomize overlay. Register each Droplet manually in `external-host.yaml`.
-
-See [§2–§4 below](#2-prepare-firecracker-snapshots-on-execution-droplets) for Droplet provisioning, snapshot prep, and firewall rules.
-
----
-
 ## Prerequisites (both paths)
 
 ### Kubernetes cluster
 
-- Kubernetes **1.28+** with a working default `StorageClass` (for Postgres PVCs if you run DB in-cluster).
+- Kubernetes **1.28+** (DOKS recommended for production).
 - `kubectl` configured against your target cluster.
 - An ingress controller and TLS (cert-manager recommended).
-- A container registry (Docker Hub, DigitalOcean Container Registry, ECR, etc.).
+- A container registry (DigitalOcean Container Registry recommended).
 
 ### Execution Droplets (one or more)
 
-Each execution Droplet is a dedicated Linux VM **outside** the cluster (e.g. DigitalOcean Droplet, EC2 instance, Hetzner bare metal):
+Each execution Droplet is a dedicated Linux VM **outside** the cluster (e.g. DigitalOcean CPU-Optimized Droplet, EC2 instance):
 
 | Requirement | Notes |
 | --- | --- |
@@ -220,7 +235,7 @@ On **DigitalOcean**: use standalone CPU-Optimized Droplets in the **same VPC** a
 
 | Service | Purpose |
 | --- | --- |
-| Postgres 16+ | Auth, dashboard settings, GitHub token storage |
+| **Managed Postgres 16+** | Auth, dashboard settings, GitHub token storage (DigitalOcean Managed Postgres, Neon, RDS, etc.) |
 | Resend (or SMTP) | Magic-link and verification emails |
 | GitHub OAuth app | Sign-in + repo access for sessions |
 | Cursor / Anthropic API keys | Real agent execution (`cursor`, `claude`) |
@@ -447,7 +462,7 @@ Load-balance schedulers from the API server with one of:
 
 ### Path A (in-cluster KVM)
 
-Already covered in [Path A](#path-a--in-cluster-kvm-worker-pool-recommended-for-bare-metal). Use `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone`.
+Already covered in [Path A](#path-a--in-cluster-kvm-worker-pool-self-managed-clusters-only). Use `kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone`.
 
 ### Path B (external hosts) — orchestrator only
 
@@ -561,9 +576,29 @@ MicroVM runtime ports (`192.168.127.x:8080`) stay host-local — do not expose t
 
 ---
 
-## 5. Deploy Postgres
+## 5. Database (managed Postgres)
 
-Use a managed database (DigitalOcean Managed Postgres, RDS, Neon) in production, or run Postgres in-cluster:
+Use a **managed Postgres** provider in production. Do not run Postgres in the Kubernetes cluster.
+
+### DigitalOcean Managed Postgres
+
+1. Create a Postgres 16 cluster in the **same region/VPC** as DOKS.
+2. Add the DOKS cluster as a **trusted source** (or allow the VPC CIDR).
+3. Copy the connection string from the DO control panel.
+4. Run migrations from your workstation or a one-off Job:
+
+```sh
+export DATABASE_URL='postgres://user:pass@your-db.db.ondigitalocean.com:25060/devin?sslmode=require'
+bun run migrate
+psql "$DATABASE_URL" -f packages/drizzle/drizzle/0001_github_settings.sql
+```
+
+Set `DATABASE_URL` in the `devin-server` secret (see [§6](#6-deploy-api-server-and-web)). Use the provider hostname — not an in-cluster service name.
+
+<details>
+<summary>Appendix: in-cluster Postgres (local/dev only)</summary>
+
+For local experimentation only — not for production on DigitalOcean:
 
 ```yaml
 # deploy/kubernetes/app/postgres.yaml
@@ -641,6 +676,8 @@ bun run migrate
 psql "$DATABASE_URL" -f packages/drizzle/drizzle/0001_github_settings.sql
 ```
 
+</details>
+
 ---
 
 ## 6. Deploy API server and web
@@ -663,7 +700,7 @@ stringData:
   BETTER_AUTH_URL: "https://api.yourdomain.com"
   WEB_APP_URL: "https://yourdomain.com"
   PORT: "8080"
-  DATABASE_URL: "postgres://postgres:change-me@devin-postgres:5432/devin"
+  DATABASE_URL: "postgres://user:pass@your-db.db.ondigitalocean.com:25060/devin?sslmode=require"
   SCHEDULER_URL: "http://10.116.0.12:9091"
   RESEND_API_KEY: ""
   RESEND_FROM_EMAIL: "Devin <onboarding@yourdomain.com>"
@@ -814,7 +851,7 @@ docker logs -f scheduler
 | Kubernetes | DOKS (app + orchestrator only) |
 | Execution hosts | CPU-Optimized Droplets, same VPC as DOKS |
 | Registry | DO Container Registry |
-| Database | Managed Postgres (recommended) or in-cluster |
+| Database | Managed Postgres (DigitalOcean Managed Postgres, Neon, etc.) |
 | Object storage | DO Spaces — optional for snapshot distribution to new Droplets |
 | Firewall | DO Cloud Firewall per Droplet + DOKS |
 

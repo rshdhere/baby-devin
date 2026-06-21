@@ -1,4 +1,4 @@
-# In-cluster KVM execution pool (recommended for bare-metal / self-managed clusters).
+# In-cluster KVM execution pool (self-managed clusters with /dev/kvm workers — not DOKS).
 #
 # Apply order:
 #   kubectl apply -f deploy/kubernetes/namespaces.yaml

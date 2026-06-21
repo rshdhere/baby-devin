@@ -194,19 +194,19 @@ curl -N http://localhost:9091/api/v1/tasks/{taskId}/events
 
 ## Kubernetes deploy
 
-Two bundles — see `deployment.md` for full details:
+Production on **DigitalOcean** uses Path B (DOKS + external execution Droplets + managed Postgres). See `deployment.md` for full details:
 
 ```sh
-# Path A: in-cluster KVM worker pool (bare metal / self-managed)
-kubectl label node <kvm-node> devin.baby/firecracker-host=true
-kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
-
-# Path B: external execution Droplets (managed cloud)
+# Path B: DOKS control plane + external execution Droplets (recommended)
 kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
 kubectl apply -f deploy/kubernetes/firecracker/external-host.yaml
+
+# Path A: in-cluster KVM worker pool (self-managed K8s only — not DOKS)
+kubectl label node <kvm-node> devin.baby/firecracker-host=true
+kubectl apply -k deploy/kubernetes/in-cluster/ --load-restrictor LoadRestrictionsNone
 ```
 
-Set on server: `SCHEDULER_URL` to `spec.schedulerAddress` from a registered `FirecrackerHost` (Path A) or your Droplet scheduler URL (Path B).
+Set on server: `DATABASE_URL` to your managed Postgres connection string; `SCHEDULER_URL` to your execution Droplet scheduler URL (`http://<private-ip>:9091`).
 
 ## Scripts
 

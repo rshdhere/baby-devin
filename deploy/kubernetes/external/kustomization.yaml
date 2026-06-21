@@ -1,4 +1,4 @@
-# External execution hosts (managed cloud / Droplets outside the cluster).
+# External execution hosts (recommended for DigitalOcean / managed cloud).
 #
 # Apply order:
 #   kubectl apply -k deploy/kubernetes/external/ --load-restrictor LoadRestrictionsNone
