@@ -27,6 +27,13 @@ out/
 build
 dist
 
+# Go binaries
+apps/*/bin/
+apps/orchestrator/orchestrator
+apps/runtime/runtime
+apps/firecracker-host/host
+apps/firecracker-host/tc-redirect-tap
+
 
 # Debug
 npm-debug.log*
@@ -42,6 +49,7 @@ AGENTS.md
 
 # Zed Configuration
 .zed/
+.zed
 
 # Terraform
 infra/.terraform/
