@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars and adjust for your AWS account.
+# terraform apply -var-file=terraform.tfvars
+
+aws_region  = "us-east-1"
+environment = "dev"
+
+cluster_name    = "devin"
+cluster_version = "1.29"
+
+vpc_cidr           = "10.0.0.0/16"
+az_count           = 2
+enable_nat_gateway = true  # required for Docker Hub, Neon, GitHub from private subnets
+single_nat_gateway = true  # one NAT for all AZs (cheaper dev/staging)
+
+eks_node_instance_types = ["m6i.large"]
+eks_node_desired_size   = 2
+eks_node_min_size       = 1
+eks_node_max_size       = 4
+
+# Docker Hub — images: <container_registry>/devin-server, devin-web, etc.
+container_registry  = "docker.io/youruser"
+container_image_tag = "latest"
+
+# Path B — external Firecracker execution hosts (deployment.md)
+execution_host_count          = 1
+execution_host_instance_type  = "c7i.2xlarge"
+execution_host_root_volume_size = 200
+# execution_host_ssh_key_name            = "your-keypair"
+# execution_host_admin_ssh_cidr_blocks   = ["203.0.113.10/32"]
+
+tags = {
+  Owner = "platform"
+}

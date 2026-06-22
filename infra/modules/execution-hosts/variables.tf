@@ -1,0 +1,83 @@
+variable "name_prefix" {
+  description = "Prefix for execution host resource names."
+  type        = string
+}
+
+variable "vpc_id" {
+  description = "VPC ID."
+  type        = string
+}
+
+variable "vpc_cidr_block" {
+  description = "VPC CIDR block."
+  type        = string
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs for execution hosts."
+  type        = list(string)
+}
+
+variable "eks_node_security_group_id" {
+  description = "EKS node security group — allowed to reach firecracker-host and scheduler ports."
+  type        = string
+}
+
+variable "host_count" {
+  description = "Number of Firecracker execution hosts to provision."
+  type        = number
+  default     = 1
+}
+
+variable "instance_type" {
+  description = "EC2 instance type (compute-optimized with KVM; see deployment.md)."
+  type        = string
+  default     = "c7i.2xlarge"
+}
+
+variable "ami_id" {
+  description = "AMI ID (Ubuntu 24.04 LTS recommended). Leave null to use latest Ubuntu 24.04."
+  type        = string
+  default     = null
+}
+
+variable "root_volume_size" {
+  description = "Root EBS volume size in GiB for /var/lib/devin snapshots."
+  type        = number
+  default     = 200
+}
+
+variable "root_volume_type" {
+  description = "Root EBS volume type."
+  type        = string
+  default     = "gp3"
+}
+
+variable "ssh_key_name" {
+  description = "EC2 key pair name for SSH access (optional)."
+  type        = string
+  default     = null
+}
+
+variable "admin_ssh_cidr_blocks" {
+  description = "CIDR blocks allowed SSH (port 22) to execution hosts."
+  type        = list(string)
+  default     = []
+}
+
+variable "container_registry" {
+  description = "Docker Hub image prefix (e.g. docker.io/youruser)."
+  type        = string
+}
+
+variable "image_tag" {
+  description = "Container image tag for firecracker-host and scheduler."
+  type        = string
+  default     = "latest"
+}
+
+variable "tags" {
+  description = "Tags applied to execution host resources."
+  type        = map(string)
+  default     = {}
+}

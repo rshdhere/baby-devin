@@ -39,3 +39,13 @@ yarn-error.log*
 
 # Agent Config
 AGENTS.md
+
+# Zed Configuration
+.zed/
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+!infra/*.tfvars.example
