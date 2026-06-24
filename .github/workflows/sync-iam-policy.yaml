@@ -1,0 +1,61 @@
+name: sync-iam-policy
+
+# GitOps: merge changes to devin-infra-policy.json → publish new policy version in AWS.
+# Auth: GitHub OIDC → IAM role (no long-lived AWS keys in GitHub).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/iam/devin-infra-policy.json"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-iam-policy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # workflow_dispatch can be triggered from any branch; only sync from main.
+    if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: infra/iam
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_IAM_SYNC_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Publish IAM policy version
+        env:
+          POLICY_NAME: devin-infra-terraform
+        run: |
+          set -euo pipefail
+          POLICY_ARN="$(aws iam list-policies --scope Local \
+            --query "Policies[?PolicyName=='${POLICY_NAME}'].Arn | [0]" --output text)"
+          if [[ -z "${POLICY_ARN}" || "${POLICY_ARN}" == "None" ]]; then
+            echo "Policy ${POLICY_NAME} not found. Create it once in IAM, then re-run." >&2
+            exit 1
+          fi
+          VERSION_ID="$(aws iam create-policy-version \
+            --policy-arn "${POLICY_ARN}" \
+            --policy-document "file://devin-infra-policy.json" \
+            --set-as-default \
+            --query 'PolicyVersion.VersionId' \
+            --output text)"
+          echo "Published ${POLICY_NAME} version ${VERSION_ID}"
+          for version_id in $(aws iam list-policy-versions --policy-arn "${POLICY_ARN}" \
+            --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text); do
+            aws iam delete-policy-version \
+              --policy-arn "${POLICY_ARN}" \
+              --version-id "${version_id}" || true
+          done

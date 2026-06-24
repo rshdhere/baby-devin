@@ -1,5 +1,9 @@
 # Terraform
+devin-infra.credentials
 .terraform/
+iam/.terraform/
+iam/*.tfstate
+iam/*.tfstate.*
 *.tfstate
 *.tfstate.*
 *.tfvars

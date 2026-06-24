@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Terraform wrapper: use devin-infra profile when configured, else default credentials.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+PROFILE="${AWS_PROFILE:-devin-infra}"
+
+if [[ -n "${AWS_PROFILE:-}" ]] || [[ "${PROFILE}" == "devin-infra" ]]; then
+  if aws configure list-profiles 2>/dev/null | grep -qx "${PROFILE}"; then
+    export AWS_PROFILE="${PROFILE}"
+  else
+    echo "Note: AWS profile '${PROFILE}' not found; using default credentials." >&2
+    echo "      Configure with: ./scripts/configure-devin-infra-profile.sh" >&2
+    unset AWS_PROFILE
+  fi
+fi
+
+exec terraform "$@"
