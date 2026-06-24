@@ -51,8 +51,7 @@ data "aws_iam_policy_document" "github_iam_sync" {
       "iam:DeletePolicyVersion",
       "iam:GetPolicy",
       "iam:GetPolicyVersion",
-      "iam:ListPolicyVersions",
-      "iam:ListPolicies"
+      "iam:ListPolicyVersions"
     ]
     resources = [
       aws_iam_policy.terraform.arn,

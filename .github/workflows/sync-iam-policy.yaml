@@ -40,12 +40,8 @@ jobs:
           POLICY_NAME: devin-infra-terraform
         run: |
           set -euo pipefail
-          POLICY_ARN="$(aws iam list-policies --scope Local \
-            --query "Policies[?PolicyName=='${POLICY_NAME}'].Arn | [0]" --output text)"
-          if [[ -z "${POLICY_ARN}" || "${POLICY_ARN}" == "None" ]]; then
-            echo "Policy ${POLICY_NAME} not found. Create it once in IAM, then re-run." >&2
-            exit 1
-          fi
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_NAME}"
           VERSION_ID="$(aws iam create-policy-version \
             --policy-arn "${POLICY_ARN}" \
             --policy-document "file://devin-infra-policy.json" \
