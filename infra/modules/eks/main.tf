@@ -58,6 +58,11 @@ resource "aws_iam_role_policy_attachment" "node_amazon_eks_cni_policy" {
   role       = aws_iam_role.node.name
 }
 
+resource "aws_iam_role_policy_attachment" "node_amazon_ec2_container_registry_read_only" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.node.name
+}
+
 resource "aws_security_group" "cluster" {
   name_prefix = "${var.cluster_name}-cluster-"
   description = "EKS cluster control plane security group"
@@ -138,10 +143,10 @@ resource "aws_eks_cluster" "this" {
   role_arn = aws_iam_role.cluster.arn
 
   vpc_config {
-    subnet_ids              = var.private_subnet_ids
-    endpoint_public_access  = var.endpoint_public_access
-    public_access_cidrs     = var.endpoint_public_access_cidrs
-    security_group_ids      = [aws_security_group.cluster.id]
+    subnet_ids             = var.private_subnet_ids
+    endpoint_public_access = var.endpoint_public_access
+    public_access_cidrs    = var.endpoint_public_access_cidrs
+    security_group_ids     = [aws_security_group.cluster.id]
   }
 
   enabled_cluster_log_types = ["api", "audit", "authenticator"]
@@ -159,7 +164,21 @@ resource "aws_eks_cluster" "this" {
 resource "aws_launch_template" "node" {
   name_prefix = "${var.cluster_name}-node-"
 
-  vpc_security_group_ids = [aws_security_group.node.id]
+  vpc_security_group_ids = [
+    aws_security_group.node.id,
+    aws_eks_cluster.this.vpc_config[0].cluster_security_group_id,
+  ]
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = var.node_disk_size
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -192,7 +211,6 @@ resource "aws_eks_node_group" "control_plane" {
   }
 
   instance_types = var.node_instance_types
-  disk_size      = var.node_disk_size
   capacity_type  = "ON_DEMAND"
 
   launch_template {
@@ -211,17 +229,11 @@ resource "aws_eks_node_group" "control_plane" {
   depends_on = [
     aws_iam_role_policy_attachment.node_amazon_eks_worker_node_policy,
     aws_iam_role_policy_attachment.node_amazon_eks_cni_policy,
+    aws_iam_role_policy_attachment.node_amazon_ec2_container_registry_read_only,
+    aws_security_group_rule.node_ingress_cluster,
+    aws_security_group_rule.node_ingress_self,
+    aws_security_group_rule.cluster_ingress_nodes,
   ]
-}
-
-resource "aws_security_group_rule" "node_egress_execution_hosts" {
-  description       = "Orchestrator and server reach Firecracker execution hosts"
-  type              = "egress"
-  from_port         = 9091
-  to_port           = 9092
-  protocol          = "tcp"
-  security_group_id = aws_security_group.node.id
-  cidr_blocks       = [var.vpc_cidr_block]
 }
 
 data "tls_certificate" "cluster" {

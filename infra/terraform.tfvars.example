@@ -5,7 +5,7 @@ aws_region  = "us-east-1"
 environment = "dev"
 
 cluster_name    = "devin"
-cluster_version = "1.29"
+cluster_version = "1.34"
 
 vpc_cidr           = "10.0.0.0/16"
 az_count           = 2

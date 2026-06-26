@@ -29,6 +29,7 @@ Container images are expected on **Docker Hub** (not ECR). Configure `imagePullS
 | `modules/vpc` | Multi-AZ VPC, internet gateway, public/private route tables, NAT gateway(s) |
 | `modules/eks` | EKS cluster + managed node group (control plane only) |
 | `modules/execution-hosts` | EC2 Firecracker hosts and security groups |
+| `modules/vault` | HashiCorp Vault on EKS with AWS KMS auto-unseal (optional) |
 
 **Do not** run Firecracker on EKS workers. Execution hosts are dedicated EC2 instances with `/dev/kvm`.
 
@@ -107,6 +108,13 @@ After `terraform apply`, note:
 5. **Ingress** — AWS Load Balancer Controller + ACM in GitOps
 6. **Orchestrator NLB** — internal NLB on `:9090` for execution host schedulers
 7. **Vault** (optional) — `enable_vault = true` in Terraform; see [vault/README.md](../vault/README.md)
+
+## Kubernetes version upgrades
+
+EKS upgrades **one minor version at a time** (e.g. 1.33 → 1.34, never skipping). Bump
+`cluster_version` in `terraform.tfvars`, then `terraform apply`. AWS upgrades the control plane with
+zero downtime; the managed node group rolls to a matching AMI. After apply, verify with
+`kubectl version` and `kubectl get nodes`.
 
 ## HashiCorp Vault
 

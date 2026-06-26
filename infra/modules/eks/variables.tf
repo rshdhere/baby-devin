@@ -4,9 +4,9 @@ variable "cluster_name" {
 }
 
 variable "cluster_version" {
-  description = "Kubernetes version (must be 1.28+ per deployment.md)."
+  description = "Kubernetes Version"
   type        = string
-  default     = "1.29"
+  default     = "1.34"
 }
 
 variable "vpc_id" {
