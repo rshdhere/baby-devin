@@ -56,7 +56,7 @@ cat >"${OUT_DIR}/meta.partial.json" <<EOF
 {
   "runtime": "${RUNTIME}",
   "version": "v1",
-  "runtimePort": 8080,
+  "runtimePort": 8081,
   "rootfsPath": "${ROOTFS}"
 }
 EOF

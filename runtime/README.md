@@ -77,4 +77,4 @@ spec:
   memory: 4Gi
 ```
 
-The orchestrator selects a `FirecrackerHost`, and `firecracker-host` restores the matching snapshot. The runtime supervisor listens on port **8080** inside the microVM.
+The orchestrator selects a `FirecrackerHost`, and `firecracker-host` restores the matching snapshot. The runtime supervisor listens on port **8081** inside the microVM.

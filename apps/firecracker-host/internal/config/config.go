@@ -23,6 +23,8 @@ type Config struct {
 	CNIConfDir      string
 	CNIBinPath      string
 	RuntimePort     int
+	WarmVCPU        int32
+	WarmMemoryMiB   int64
 	CapacityCPU     int32
 	CapacityMemory  string
 }
@@ -42,7 +44,9 @@ func LoadFromEnv() Config {
 		CNINetworkName:  envString("FIRECRACKER_CNI_NETWORK", "fcnet"),
 		CNIConfDir:      envString("FIRECRACKER_CNI_CONF_DIR", "/etc/cni/conf.d"),
 		CNIBinPath:      envString("FIRECRACKER_CNI_BIN_PATH", "/opt/cni/bin"),
-		RuntimePort:     envInt("FIRECRACKER_RUNTIME_PORT", 8080),
+		RuntimePort:     envInt("FIRECRACKER_RUNTIME_PORT", 8081),
+		WarmVCPU:        int32(envInt("FIRECRACKER_WARM_VCPU", 1)),
+		WarmMemoryMiB:   int64(envInt("FIRECRACKER_WARM_MEMORY_MIB", 512)),
 		CapacityCPU:     int32(envInt("FIRECRACKER_CAPACITY_CPU", 32)),
 		CapacityMemory:  envString("FIRECRACKER_CAPACITY_MEMORY", "64Gi"),
 	}

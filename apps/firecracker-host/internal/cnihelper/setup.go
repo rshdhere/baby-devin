@@ -1,0 +1,221 @@
+package cnihelper
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/containernetworking/cni/libcni"
+	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/firecracker-microvm/firecracker-go-sdk/cni/vmconf"
+	"golang.org/x/sys/unix"
+)
+
+type Network struct {
+	TapDevice string
+	GuestIP   net.IP
+	MacAddr   string
+	NetNS     string
+	cleanup   []func() error
+}
+
+func (n *Network) Cleanup() {
+	for i := len(n.cleanup) - 1; i >= 0; i-- {
+		if err := n.cleanup[i](); err != nil {
+			fmt.Fprintf(os.Stderr, "cni cleanup: %v\n", err)
+		}
+	}
+}
+
+type Config struct {
+	NetworkName string
+	ConfDir     string
+	BinPath     string
+	GuestIP     string
+}
+
+func Add(ctx context.Context, containerID string, cfg Config) (*Network, error) {
+	containerID = strings.TrimSpace(containerID)
+	if containerID == "" {
+		return nil, fmt.Errorf("container id is required")
+	}
+
+	networkName := firstNonEmpty(cfg.NetworkName, "fcnet")
+	confDir := firstNonEmpty(cfg.ConfDir, "/etc/cni/conf.d")
+	binPath := firstNonEmpty(cfg.BinPath, "/opt/cni/bin")
+	netNSPath := filepath.Join("/var/run/netns", containerID)
+
+	cleanup, err := initializeNetNS(netNSPath)
+	if err != nil {
+		return nil, err
+	}
+
+	cniPlugin := libcni.NewCNIConfigWithCacheDir([]string{binPath}, filepath.Join("/var/lib/cni", containerID), nil)
+	networkConf, err := libcni.LoadConfList(confDir, networkName)
+	if err != nil {
+		runCleanup(cleanup)
+		return nil, fmt.Errorf("load cni config %q: %w", networkName, err)
+	}
+
+	runtimeConf := &libcni.RuntimeConf{
+		ContainerID: containerID,
+		NetNS:       netNSPath,
+		IfName:      "veth0",
+	}
+	if ip := strings.TrimSpace(cfg.GuestIP); ip != "" {
+		if !strings.Contains(ip, "/") {
+			ip += "/24"
+		}
+		runtimeConf.Args = [][2]string{{"IP", ip}}
+	}
+
+	delNetwork := func() error {
+		if err := cniPlugin.DelNetworkList(ctx, networkConf, runtimeConf); err != nil {
+			return fmt.Errorf("delete cni network: %w", err)
+		}
+		return nil
+	}
+	_ = delNetwork()
+	cleanup = append(cleanup, delNetwork)
+
+	result, err := cniPlugin.AddNetworkList(ctx, networkConf, runtimeConf)
+	if err != nil {
+		runCleanup(cleanup)
+		return nil, fmt.Errorf("add cni network: %w", err)
+	}
+
+	vmNetConf, err := vmconf.StaticNetworkConfFrom(result, containerID)
+	if err != nil {
+		runCleanup(cleanup)
+		return nil, fmt.Errorf("parse cni result: %w", err)
+	}
+
+	net := &Network{
+		TapDevice: vmNetConf.TapName,
+		MacAddr:   vmNetConf.VMMacAddr,
+		NetNS:     netNSPath,
+		cleanup:   cleanup,
+	}
+	if vmNetConf.VMIPConfig != nil {
+		net.GuestIP = vmNetConf.VMIPConfig.Address.IP
+	}
+	return net, nil
+}
+
+func initializeNetNS(netNSPath string) ([]func() error, error) {
+	var cleanup []func() error
+
+	switch err := ns.IsNSorErr(netNSPath); err.(type) {
+	case nil:
+		return cleanup, nil
+	case ns.NSPathNotNSErr:
+		return nil, fmt.Errorf("path %q exists but is not a netns", netNSPath)
+	case ns.NSPathNotExistErr:
+	default:
+		return nil, fmt.Errorf("check netns %q: %w", netNSPath, err)
+	}
+
+	parentDir := filepath.Dir(netNSPath)
+	if _, err := os.Stat(parentDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(parentDir, 0o700); err != nil {
+			return nil, fmt.Errorf("create netns parent dir: %w", err)
+		}
+		cleanup = append(cleanup, func() error {
+			return os.Remove(parentDir)
+		})
+	} else if err != nil {
+		return nil, fmt.Errorf("stat netns parent dir: %w", err)
+	}
+
+	fd, err := os.OpenFile(netNSPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		runCleanup(cleanup)
+		return nil, fmt.Errorf("create netns file: %w", err)
+	}
+	fd.Close()
+	cleanup = append(cleanup, func() error {
+		return os.Remove(netNSPath)
+	})
+
+	done := make(chan error)
+	go func() {
+		defer close(done)
+		runtime.LockOSThread()
+		if err := unix.Unshare(unix.CLONE_NEWNET); err != nil {
+			done <- fmt.Errorf("unshare netns: %w", err)
+			return
+		}
+		if err := unix.Mount("/proc/thread-self/ns/net", netNSPath, "none", unix.MS_BIND, ""); err != nil {
+			done <- fmt.Errorf("mount netns: %w", err)
+			return
+		}
+		cleanup = append(cleanup, func() error {
+			return unix.Unmount(netNSPath, unix.MNT_DETACH)
+		})
+	}()
+
+	if err := <-done; err != nil {
+		runCleanup(cleanup)
+		return nil, err
+	}
+	return cleanup, nil
+}
+
+func runCleanup(cleanup []func() error) {
+	for i := len(cleanup) - 1; i >= 0; i-- {
+		_ = cleanup[i]()
+	}
+}
+
+func Delete(ctx context.Context, containerID string, cfg Config) error {
+	networkName := firstNonEmpty(cfg.NetworkName, "fcnet")
+	confDir := firstNonEmpty(cfg.ConfDir, "/etc/cni/conf.d")
+	binPath := firstNonEmpty(cfg.BinPath, "/opt/cni/bin")
+	netNSPath := filepath.Join("/var/run/netns", containerID)
+
+	cniPlugin := libcni.NewCNIConfigWithCacheDir([]string{binPath}, filepath.Join("/var/lib/cni", containerID), nil)
+	networkConf, err := libcni.LoadConfList(confDir, networkName)
+	if err != nil {
+		return fmt.Errorf("load cni config %q: %w", networkName, err)
+	}
+
+	runtimeConf := &libcni.RuntimeConf{
+		ContainerID: containerID,
+		NetNS:       netNSPath,
+		IfName:      "veth0",
+	}
+	if err := cniPlugin.DelNetworkList(ctx, networkConf, runtimeConf); err != nil {
+		return fmt.Errorf("delete cni network: %w", err)
+	}
+	_ = os.Remove(netNSPath)
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// GuestIPArgs converts a stored guest IP into CNI runtime args.
+func GuestIPArgs(guestIP string) [][2]string {
+	ip := strings.TrimSpace(guestIP)
+	if ip == "" {
+		return nil
+	}
+	if !strings.Contains(ip, "/") {
+		ip += "/24"
+	}
+	return [][2]string{{"IP", ip}}
+}
+
+// Ensure types.Result is referenced for libcni compatibility.
+var _ types.Result

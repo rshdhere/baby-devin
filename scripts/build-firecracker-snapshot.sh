@@ -22,6 +22,13 @@ MEM="${SNAP_DIR}/mem.snap"
 VM="${SNAP_DIR}/vm.snap"
 META="${SNAP_DIR}/meta.json"
 WORK="${SNAP_DIR}/.build"
+VCPU_COUNT="${FIRECRACKER_SNAPSHOT_VCPU:-1}"
+MEM_SIZE_MIB="${FIRECRACKER_SNAPSHOT_MEM_MIB:-512}"
+RUNTIME_PORT="${FIRECRACKER_RUNTIME_PORT:-8081}"
+CNI_NETWORK="${FIRECRACKER_CNI_NETWORK:-fcnet}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SNAPSHOT_CNI_BIN="${SNAPSHOT_CNI_BIN:-${ROOT}/apps/firecracker-host/bin/snapshot-cni}"
+CONTAINER_ID="snapshot-build-${RUNTIME}-$$"
 
 if [[ ! -f "${ROOTFS}" ]]; then
   echo "missing rootfs: ${ROOTFS}" >&2
@@ -40,39 +47,35 @@ if ! command -v "${FC_BIN}" >/dev/null; then
   exit 1
 fi
 
+if [[ ! -x "${SNAPSHOT_CNI_BIN}" ]]; then
+  echo "building snapshot-cni helper..."
+  (cd "${ROOT}/apps/firecracker-host" && go build -o "${SNAPSHOT_CNI_BIN}" ./cmd/snapshot-cni)
+fi
+
 mkdir -p "${WORK}"
 SOCKET="${WORK}/firecracker.sock"
 rm -f "${SOCKET}" "${MEM}" "${VM}"
 
-cat >"${WORK}/machine.json" <<EOF
-{
-  "boot-source": {
-    "kernel_image_path": "${KERNEL}",
-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/usr/local/bin/devin-runtime-supervisor"
-  },
-  "drives": [
-    {
-      "drive_id": "root",
-      "path_on_host": "${ROOTFS}",
-      "is_root_device": true,
-      "is_read_only": false
-    }
-  ],
-  "machine-config": {
-    "vcpu_count": 2,
-    "mem_size_mib": 1024
-  }
-}
-EOF
-
-echo "starting firecracker to create golden snapshot for ${RUNTIME}..."
-"${FC_BIN}" --api-sock "${SOCKET}" &
-FC_PID=$!
 cleanup() {
-  kill "${FC_PID}" 2>/dev/null || true
-  wait "${FC_PID}" 2>/dev/null || true
+  "${SNAPSHOT_CNI_BIN}" del "${CNI_NETWORK}" "${CONTAINER_ID}" >/dev/null 2>&1 || true
+  kill "${FC_PID:-}" 2>/dev/null || true
+  wait "${FC_PID:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+echo "setting up CNI for snapshot build (${CONTAINER_ID})..."
+NET_JSON="$("${SNAPSHOT_CNI_BIN}" add "${CNI_NETWORK}" "${CONTAINER_ID}")"
+TAP_DEVICE="$(echo "${NET_JSON}" | jq -r .tapDevice)"
+GUEST_MAC="$(echo "${NET_JSON}" | jq -r .macAddr)"
+GUEST_IP="$(echo "${NET_JSON}" | jq -r .guestIP)"
+if [[ -z "${TAP_DEVICE}" || "${TAP_DEVICE}" == "null" ]]; then
+  echo "failed to create tap device via CNI" >&2
+  exit 1
+fi
+
+echo "starting firecracker to create golden snapshot for ${RUNTIME} (${VCPU_COUNT} vCPU / ${MEM_SIZE_MIB} MiB)..."
+"${FC_BIN}" --api-sock "${SOCKET}" &
+FC_PID=$!
 
 for _ in $(seq 1 30); do
   [[ -S "${SOCKET}" ]] && break
@@ -81,7 +84,7 @@ done
 
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/machine-config" \
   -H 'Content-Type: application/json' \
-  -d '{"vcpu_count":2,"mem_size_mib":1024}' >/dev/null
+  -d "{\"vcpu_count\":${VCPU_COUNT},\"mem_size_mib\":${MEM_SIZE_MIB},\"smt\":false}" >/dev/null
 
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/boot-source" \
   -H 'Content-Type: application/json' \
@@ -91,20 +94,27 @@ curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/drives/root" \
   -H 'Content-Type: application/json' \
   -d "{\"drive_id\":\"root\",\"path_on_host\":\"${ROOTFS}\",\"is_root_device\":true,\"is_read_only\":false}" >/dev/null
 
+curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/network-interfaces/eth0" \
+  -H 'Content-Type: application/json' \
+  -d "{\"iface_id\":\"eth0\",\"guest_mac\":\"${GUEST_MAC}\",\"host_dev_name\":\"${TAP_DEVICE}\"}" >/dev/null
+
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/actions" \
   -H 'Content-Type: application/json' \
   -d '{"action_type":"InstanceStart"}' >/dev/null
 
-echo "waiting for runtime supervisor to become healthy..."
-# The guest IP depends on your CNI setup during snapshot creation.
-# For golden snapshots built without CNI, health is best-effort here.
-sleep 8
+echo "waiting for runtime supervisor to become healthy at http://${GUEST_IP}:${RUNTIME_PORT}/health ..."
+for _ in $(seq 1 60); do
+  if curl -sf --max-time 2 "http://${GUEST_IP}:${RUNTIME_PORT}/health" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -sf --max-time 2 "http://${GUEST_IP}:${RUNTIME_PORT}/health" >/dev/null; then
+  echo "runtime did not become healthy on ${GUEST_IP}:${RUNTIME_PORT}" >&2
+  exit 1
+fi
 
-curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/actions" \
-  -H 'Content-Type: application/json' \
-  -d '{"action_type":"SendCtrlAltDel"}' >/dev/null || true
-
-curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/vm" \
+curl -fsS --unix-socket "${SOCKET}" -X PATCH "http://localhost/vm" \
   -H 'Content-Type: application/json' \
   -d '{"state":"Paused"}' >/dev/null
 
@@ -116,7 +126,11 @@ cat >"${META}" <<EOF
 {
   "runtime": "${RUNTIME}",
   "version": "v1",
-  "runtimePort": 8080,
+  "runtimePort": ${RUNTIME_PORT},
+  "vcpuCount": ${VCPU_COUNT},
+  "memSizeMib": ${MEM_SIZE_MIB},
+  "guestIP": "${GUEST_IP}",
+  "networkIfaceId": "eth0",
   "rootfsPath": "${ROOTFS}",
   "memPath": "${MEM}",
   "snapshotPath": "${VM}"
@@ -127,3 +141,4 @@ echo "snapshot ready:"
 echo "  meta: ${META}"
 echo "  mem:  ${MEM}"
 echo "  vm:   ${VM}"
+echo "  guestIP: ${GUEST_IP}"

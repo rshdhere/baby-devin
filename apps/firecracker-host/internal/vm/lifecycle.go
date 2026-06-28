@@ -1,8 +1,12 @@
 package vm
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +16,7 @@ import (
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 
+	"github.com/rshdhere/devin/apps/firecracker-host/internal/cnihelper"
 	"github.com/rshdhere/devin/apps/firecracker-host/internal/config"
 	"github.com/rshdhere/devin/apps/firecracker-host/internal/snapshot"
 )
@@ -36,7 +41,20 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 		return nil, err
 	}
 	if cpu <= 0 {
-		cpu = 1
+		cpu = int32(meta.VcpuCount)
+	}
+	if memMiB <= 0 {
+		memMiB = int64(meta.MemSizeMib)
+	}
+	if meta.VcpuCount > 0 && int32(meta.VcpuCount) != cpu {
+		slog.Warn("restore cpu differs from snapshot metadata, using snapshot value",
+			"vmId", vmID, "requested", cpu, "snapshot", meta.VcpuCount)
+		cpu = int32(meta.VcpuCount)
+	}
+	if meta.MemSizeMib > 0 && int64(meta.MemSizeMib) != memMiB {
+		slog.Warn("restore memory differs from snapshot metadata, using snapshot value",
+			"vmId", vmID, "requested", memMiB, "snapshot", meta.MemSizeMib)
+		memMiB = int64(meta.MemSizeMib)
 	}
 
 	vmDir := filepath.Join(l.cfg.VMMDir, vmID)
@@ -48,6 +66,7 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 	logPath := filepath.Join(vmDir, "firecracker.log")
 
 	fcCfg := firecracker.Config{
+		VMID:       vmID,
 		SocketPath: socketPath,
 		LogPath:    logPath,
 		Drives: []models.Drive{
@@ -62,9 +81,11 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 			{
 				CNIConfiguration: &firecracker.CNIConfiguration{
 					NetworkName: l.cfg.CNINetworkName,
-					IfName:      "eth0",
+					IfName:      "veth0",
 					ConfDir:     l.cfg.CNIConfDir,
 					BinPath:     []string{l.cfg.CNIBinPath},
+					VMIfName:    meta.NetworkIfaceID,
+					Args:        cnihelper.GuestIPArgs(meta.GuestIP),
 				},
 			},
 		},
@@ -93,6 +114,24 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
 
+	machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+		Name: "fcinit.LoadSnapshot",
+		Fn: func(ctx context.Context, m *firecracker.Machine) error {
+			tapDevice, err := tapDeviceFromMachine(m)
+			if err != nil {
+				return err
+			}
+			slog.Info("loading firecracker snapshot with network override",
+				"vmId", vmID,
+				"runtime", runtime,
+				"iface", meta.NetworkIfaceID,
+				"tap", tapDevice,
+				"guestIP", meta.GuestIP,
+			)
+			return loadSnapshotWithOverrides(ctx, socketPath, meta.MemPath, meta.SnapshotPath, meta.NetworkIfaceID, tapDevice, true)
+		},
+	})
+
 	if err := machine.Start(vmmCtx); err != nil {
 		cancel()
 		_ = machine.StopVMM()
@@ -103,6 +142,8 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 	if err != nil {
 		cancel()
 		_ = machine.StopVMM()
+		slog.Error("failed to resolve microVM network after snapshot restore",
+			"vmId", vmID, "runtime", runtime, "error", err)
 		return nil, err
 	}
 
@@ -119,12 +160,81 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 		cancel:     cancel,
 	}
 
+	slog.Info("waiting for runtime health",
+		"vmId", vmID,
+		"runtime", runtime,
+		"runtimeURL", runtimeURL,
+	)
 	if err := waitForRuntimeHealth(ctx, instance.RuntimeURL, 30*time.Second); err != nil {
 		_ = instance.Shutdown(context.Background())
 		return nil, fmt.Errorf("runtime health check failed: %w", err)
 	}
 
 	return instance, nil
+}
+
+func tapDeviceFromMachine(machine *firecracker.Machine) (string, error) {
+	if len(machine.Cfg.NetworkInterfaces) == 0 {
+		return "", fmt.Errorf("firecracker machine has no network interfaces configured")
+	}
+	staticCfg := machine.Cfg.NetworkInterfaces[0].StaticConfiguration
+	if staticCfg == nil || staticCfg.HostDevName == "" {
+		return "", fmt.Errorf("firecracker machine has no tap device from CNI setup")
+	}
+	return staticCfg.HostDevName, nil
+}
+
+type snapshotLoadBody struct {
+	MemFilePath      string            `json:"mem_file_path"`
+	SnapshotPath     string            `json:"snapshot_path"`
+	ResumeVM         bool              `json:"resume_vm"`
+	NetworkOverrides []networkOverride `json:"network_overrides,omitempty"`
+}
+
+type networkOverride struct {
+	IfaceID     string `json:"iface_id"`
+	HostDevName string `json:"host_dev_name"`
+}
+
+func loadSnapshotWithOverrides(ctx context.Context, socketPath, memPath, snapPath, ifaceID, tapDevice string, resume bool) error {
+	body := snapshotLoadBody{
+		MemFilePath:  memPath,
+		SnapshotPath: snapPath,
+		ResumeVM:     resume,
+		NetworkOverrides: []networkOverride{
+			{IfaceID: ifaceID, HostDevName: tapDevice},
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/snapshot/load", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socketPath)
+			},
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("snapshot load request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("snapshot load returned %s: %s", resp.Status, string(raw))
+	}
+	return nil
 }
 
 func machineIP(machine *firecracker.Machine) (net.IP, error) {

@@ -9,25 +9,33 @@ import (
 )
 
 type Metadata struct {
-	Runtime     string `json:"runtime"`
-	Version     string `json:"version"`
-	RuntimePort int    `json:"runtimePort"`
-	RootfsPath  string `json:"rootfsPath"`
-	MemPath     string `json:"memPath"`
-	SnapshotPath string `json:"snapshotPath"`
+	Runtime         string `json:"runtime"`
+	Version         string `json:"version"`
+	RuntimePort     int    `json:"runtimePort"`
+	VcpuCount       int    `json:"vcpuCount,omitempty"`
+	MemSizeMib      int    `json:"memSizeMib,omitempty"`
+	GuestIP         string `json:"guestIP,omitempty"`
+	NetworkIfaceID  string `json:"networkIfaceId,omitempty"`
+	RootfsPath      string `json:"rootfsPath"`
+	MemPath         string `json:"memPath"`
+	SnapshotPath    string `json:"snapshotPath"`
 }
 
 type Store struct {
 	baseDir     string
 	kernelPath  string
 	runtimePort int
+	warmVCPU    int32
+	warmMemory  int64
 }
 
-func NewStore(baseDir, kernelPath string, runtimePort int) *Store {
+func NewStore(baseDir, kernelPath string, runtimePort int, warmVCPU int32, warmMemoryMiB int64) *Store {
 	return &Store{
 		baseDir:     baseDir,
 		kernelPath:  kernelPath,
 		runtimePort: runtimePort,
+		warmVCPU:    warmVCPU,
+		warmMemory:  warmMemoryMiB,
 	}
 }
 
@@ -46,18 +54,7 @@ func (s *Store) Resolve(runtime string) (*Metadata, error) {
 			return nil, fmt.Errorf("decode snapshot metadata: %w", err)
 		}
 		meta.Runtime = runtime
-		if meta.RuntimePort == 0 {
-			meta.RuntimePort = s.runtimePort
-		}
-		if meta.RootfsPath == "" {
-			meta.RootfsPath = filepath.Join(dir, "rootfs.ext4")
-		}
-		if meta.MemPath == "" {
-			meta.MemPath = filepath.Join(dir, "mem.snap")
-		}
-		if meta.SnapshotPath == "" {
-			meta.SnapshotPath = filepath.Join(dir, "vm.snap")
-		}
+		s.applyDefaults(&meta, dir)
 		return s.validate(&meta)
 	}
 
@@ -65,11 +62,38 @@ func (s *Store) Resolve(runtime string) (*Metadata, error) {
 		Runtime:      runtime,
 		Version:      "v1",
 		RuntimePort:  s.runtimePort,
+		VcpuCount:    int(s.warmVCPU),
+		MemSizeMib:   int(s.warmMemory),
 		RootfsPath:   filepath.Join(dir, "rootfs.ext4"),
 		MemPath:      filepath.Join(dir, "mem.snap"),
 		SnapshotPath: filepath.Join(dir, "vm.snap"),
 	}
+	s.applyDefaults(meta, dir)
 	return s.validate(meta)
+}
+
+func (s *Store) applyDefaults(meta *Metadata, dir string) {
+	if meta.RuntimePort == 0 {
+		meta.RuntimePort = s.runtimePort
+	}
+	if meta.VcpuCount <= 0 {
+		meta.VcpuCount = int(s.warmVCPU)
+	}
+	if meta.MemSizeMib <= 0 {
+		meta.MemSizeMib = int(s.warmMemory)
+	}
+	if meta.NetworkIfaceID == "" {
+		meta.NetworkIfaceID = "eth0"
+	}
+	if meta.RootfsPath == "" {
+		meta.RootfsPath = filepath.Join(dir, "rootfs.ext4")
+	}
+	if meta.MemPath == "" {
+		meta.MemPath = filepath.Join(dir, "mem.snap")
+	}
+	if meta.SnapshotPath == "" {
+		meta.SnapshotPath = filepath.Join(dir, "vm.snap")
+	}
 }
 
 func (s *Store) KernelPath() string {

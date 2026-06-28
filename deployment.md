@@ -89,7 +89,7 @@ Traffic flow:
 User → Ingress → web (3000) + server (8080)
 server → scheduler on KVM node (:9091, hostNetwork)
 scheduler → orchestrator (:9090) → Sandbox CR (preferredHost = node name)
-orchestrator → firecracker-host on same node (:9092) → microVM (:8080, 192.168.127.x)
+orchestrator → firecracker-host on same node (:9092) → microVM (:8081, 192.168.127.x)
 scheduler → runtime inside microVM (host-local CNI)
 ```
 
@@ -422,7 +422,7 @@ curl -s http://127.0.0.1:9092/v1/status
 
 ### 3.4 Run scheduler on the same host
 
-The scheduler must run **on the same machine** as firecracker-host so it can reach microVM runtime URLs (`http://192.168.127.x:8080`).
+The scheduler must run **on the same machine** as firecracker-host so it can reach microVM runtime URLs (`http://192.168.127.x:8081`).
 
 Point it at the in-cluster orchestrator. Use the orchestrator's **VPC-private** endpoint (see [Expose orchestrator to execution hosts](#44-expose-orchestrator-to-execution-hosts)).
 
@@ -568,7 +568,7 @@ Set `ORCHESTRATOR_URL` on each execution host to this NLB's private DNS name or 
 
 **EKS / orchestrator:** allow egress to execution host VPC CIDR on `9092`.
 
-MicroVM runtime ports (`192.168.127.x:8080`) stay host-local — do not expose them in the security group.
+MicroVM runtime ports (`192.168.127.x:8081`) stay host-local — do not expose them in the security group.
 
 ---
 

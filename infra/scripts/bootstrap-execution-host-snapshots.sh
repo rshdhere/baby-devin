@@ -50,7 +50,7 @@ require_kvm() {
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y curl ca-certificates git golang-go e2fsprogs build-essential
+  apt-get install -y curl ca-certificates git golang-go e2fsprogs build-essential jq
 }
 
 install_firecracker() {
@@ -114,7 +114,7 @@ clone_repo() {
 build_runtime() {
   local runtime="$1"
   local snap_meta="/var/lib/devin/snapshots/${runtime}/meta.json"
-  if [[ -f "${snap_meta}" ]]; then
+  if [[ -f "${snap_meta}" && "${DEVIN_FORCE_SNAPSHOT_REBUILD:-false}" != "true" ]]; then
     log "snapshot already exists for ${runtime}"
     return
   fi
@@ -132,7 +132,11 @@ build_runtime() {
     export GOPATH=/root/go
     export PATH="/usr/local/bin:${PATH}"
     export FIRECRACKER_BIN=/usr/local/bin/firecracker
+    export FIRECRACKER_RUNTIME_PORT=8081
+    export FIRECRACKER_SNAPSHOT_VCPU=1
+    export FIRECRACKER_SNAPSHOT_MEM_MIB=512
     mkdir -p "${GOCACHE}" "${GOPATH}"
+    (cd apps/firecracker-host && go build -o /usr/local/bin/snapshot-cni ./cmd/snapshot-cni)
     ./scripts/build-firecracker-rootfs.sh "${runtime}"
     ./scripts/build-firecracker-snapshot.sh "${runtime}"
   )

@@ -68,9 +68,13 @@ func NewManager(cfg config.Config) (*Manager, error) {
 		return m, nil
 	}
 
-	store := snapshot.NewStore(cfg.SnapshotDir, cfg.KernelPath, cfg.RuntimePort)
+	store := snapshot.NewStore(cfg.SnapshotDir, cfg.KernelPath, cfg.RuntimePort, cfg.WarmVCPU, cfg.WarmMemoryMiB)
 	m.launcher = vm.NewLauncher(cfg, store)
 	return m, nil
+}
+
+func (m *Manager) snapshotStore() *snapshot.Store {
+	return snapshot.NewStore(m.cfg.SnapshotDir, m.cfg.KernelPath, m.cfg.RuntimePort, m.cfg.WarmVCPU, m.cfg.WarmMemoryMiB)
 }
 
 func (m *Manager) Start(ctx context.Context) {
@@ -79,7 +83,7 @@ func (m *Manager) Start(ctx context.Context) {
 		return
 	}
 
-	runtimes, err := snapshot.NewStore(m.cfg.SnapshotDir, m.cfg.KernelPath, m.cfg.RuntimePort).ListRuntimes()
+	runtimes, err := m.snapshotStore().ListRuntimes()
 	if err != nil {
 		slog.Error("failed to list snapshot runtimes", "error", err)
 		runtimes = []string{m.cfg.DefaultRuntime}
@@ -147,7 +151,14 @@ func (m *Manager) warmRuntimePool(ctx context.Context, runtime string, queue cha
 
 func (m *Manager) launchWarm(ctx context.Context, runtime string) (*vm.Instance, error) {
 	vmID := xid.New().String()
-	return m.launcher.Restore(ctx, vmID, "warm-"+vmID, runtime, 1, "512Mi")
+	return m.launcher.Restore(
+		ctx,
+		vmID,
+		"warm-"+vmID,
+		runtime,
+		m.cfg.WarmVCPU,
+		fmt.Sprintf("%dMi", m.cfg.WarmMemoryMiB),
+	)
 }
 
 func (m *Manager) Create(name, runtime, taskID string, cpu int32, memory string) (*VMRecord, error) {
