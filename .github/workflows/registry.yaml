@@ -49,6 +49,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker metadata
+        if: matrix.app != 'web'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -58,18 +59,48 @@ jobs:
             type=sha,prefix=,format=long
             type=ref,event=tag
 
-      - name: Validate web build args
+      - name: Docker metadata (web)
+        if: matrix.app == 'web'
+        id: meta_web
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=long
+            type=raw,value=${{ github.sha }}-staging,enable={{is_default_branch}}
+            type=ref,event=tag
+
+      - name: Resolve web build args
         if: matrix.app == 'web' && github.event_name != 'pull_request'
+        id: web_build_args
         run: |
           set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            api_url="${{ vars.NEXT_PUBLIC_API_URL }}"
+            web_app_url="${{ vars.NEXT_PUBLIC_WEB_APP_URL }}"
+            environment="production"
+          else
+            api_url="${{ vars.STAGING_NEXT_PUBLIC_API_URL }}"
+            web_app_url="${{ vars.STAGING_NEXT_PUBLIC_WEB_APP_URL }}"
+            environment="staging"
+          fi
+
           missing=()
-          [[ -z "${{ vars.NEXT_PUBLIC_API_URL }}" ]] && missing+=("NEXT_PUBLIC_API_URL")
-          [[ -z "${{ vars.NEXT_PUBLIC_WEB_APP_URL }}" ]] && missing+=("NEXT_PUBLIC_WEB_APP_URL")
+          [[ -z "${api_url}" ]] && missing+=("NEXT_PUBLIC_API_URL or STAGING_NEXT_PUBLIC_API_URL")
+          [[ -z "${web_app_url}" ]] && missing+=("NEXT_PUBLIC_WEB_APP_URL or STAGING_NEXT_PUBLIC_WEB_APP_URL")
           if ((${#missing[@]} > 0)); then
-            echo "::error::Missing GitHub repository variables: ${missing[*]}"
-            echo "Set them to match secret/prod/ci in Vault (e.g. NEXT_PUBLIC_API_URL=https://api.devin.baby)."
+            echo "::error::Missing GitHub repository variables for ${environment}: ${missing[*]}"
+            echo "Production: NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WEB_APP_URL"
+            echo "Staging: STAGING_NEXT_PUBLIC_API_URL, STAGING_NEXT_PUBLIC_WEB_APP_URL"
             exit 1
           fi
+
+          {
+            echo "api_url=${api_url}"
+            echo "web_app_url=${web_app_url}"
+            echo "environment=${environment}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Build and push web
         if: matrix.app == 'web'
@@ -78,13 +109,13 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          tags: ${{ steps.meta_web.outputs.tags }}
+          labels: ${{ steps.meta_web.outputs.labels }}
+          cache-from: type=gha,scope=web-${{ steps.web_build_args.outputs.environment || 'pr' }}
+          cache-to: type=gha,mode=max,scope=web-${{ steps.web_build_args.outputs.environment || 'pr' }}
           build-args: |
-            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
-            NEXT_PUBLIC_WEB_APP_URL=${{ vars.NEXT_PUBLIC_WEB_APP_URL }}
+            NEXT_PUBLIC_API_URL=${{ steps.web_build_args.outputs.api_url || vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_WEB_APP_URL=${{ steps.web_build_args.outputs.web_app_url || vars.NEXT_PUBLIC_WEB_APP_URL }}
 
       - name: Build and push
         if: matrix.app != 'web'
@@ -110,12 +141,15 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             ENVIRONMENT="production"
             OVERLAY="production/devin/overlays/external/kustomization.yaml"
+            WEB_TAG="${GITHUB_SHA}"
           else
             ENVIRONMENT="staging"
             OVERLAY="staging/devin/overlays/external/kustomization.yaml"
+            WEB_TAG="${GITHUB_SHA}-staging"
           fi
           {
             echo "sha=${GITHUB_SHA}"
+            echo "web_tag=${WEB_TAG}"
             echo "environment=${ENVIRONMENT}"
             echo "overlay=${OVERLAY}"
           } >> "${GITHUB_OUTPUT}"
@@ -133,8 +167,11 @@ jobs:
           set -euo pipefail
           OVERLAY="${{ steps.target.outputs.overlay }}"
           SHA="${{ steps.target.outputs.sha }}"
-          # devin-orchestrator, devin-server, devin-web all carry `newTag:` in this overlay.
+          WEB_TAG="${{ steps.target.outputs.web_tag }}"
           sed -i -E "s|^([[:space:]]*newTag:).*|\1 ${SHA}|" "${OVERLAY}"
+          if [[ "${{ steps.target.outputs.environment }}" == "staging" ]]; then
+            sed -i "/name: devin-web/{n; s/newTag: .*/newTag: ${WEB_TAG}/;}" "${OVERLAY}"
+          fi
           echo "Updated ${OVERLAY}:"
           git --no-pager diff -- "${OVERLAY}"
 

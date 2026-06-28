@@ -8,11 +8,12 @@ All application secrets live in **Vault KV v2** instead of `.env` files, plain K
 | --- | --- | --- |
 | `secret/dev/server` | API server (local) | `BETTER_AUTH_SECRET`, `DATABASE_URL`, `SCHEDULER_URL`, OAuth, Resend |
 | `secret/dev/scheduler` | Scheduler (local / EC2) | `ORCHESTRATOR_URL`, `CURSOR_API_KEY`, `ANTHROPIC_API_KEY` |
-| `secret/dev/ci` | GitHub Actions | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WEB_APP_URL` |
-| `secret/prod/server` | EKS `devin-server` | Same as dev |
+| `secret/dev/ci` | GitHub Actions (local) | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WEB_APP_URL` |
+| `secret/staging/server` | EKS `devin-staging` server | Same keys as dev; use staging hostnames |
+| `secret/staging/ci` | GitHub Actions (staging web build) | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WEB_APP_URL` for staging |
+| `secret/prod/server` | EKS `devin-app` server | Same as dev |
+| `secret/prod/ci` | GitHub Actions (production web build) | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WEB_APP_URL` for production |
 | `secret/prod/scheduler` | EC2 execution hosts | Scheduler + agent keys |
-
-Use `staging/` paths the same way for pre-production environments.
 
 ## Local development
 
