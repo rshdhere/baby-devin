@@ -4,8 +4,11 @@ import { sendMagicLinkEmail, sendVerificationEmail } from "@devin/email";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, magicLink } from "better-auth/plugins";
+import { oAuthProxy } from "better-auth/plugins/oauth-proxy";
+import { resolveOAuthProductionUrl, shouldUseOAuthProxy } from "./auth-url.js";
 import { getAllowedOrigins } from "./cors.js";
 import { deliverVerificationEmail } from "./verification-email.js";
+import { logAuthConfig } from "./log-auth-config.js";
 
 const githubClientId = process.env.GITHUB_CLIENT_ID;
 const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
@@ -45,6 +48,28 @@ if (windsurfClientId && windsurfClientSecret && windsurfDiscoveryUrl) {
   });
 }
 
+const authPlugins = [
+  magicLink({
+    sendMagicLink: async ({ email, url }) => {
+      await sendMagicLinkEmail({ to: email, url });
+    },
+  }),
+  ...(oauthProviders.length > 0
+    ? [genericOAuth({ config: oauthProviders })]
+    : []),
+];
+
+if (githubClientId && githubClientSecret) {
+  authPlugins.unshift(
+    oAuthProxy({
+      productionURL: resolveOAuthProductionUrl() ?? process.env.BETTER_AUTH_URL,
+      ...(shouldUseOAuthProxy()
+        ? { currentURL: process.env.BETTER_AUTH_URL }
+        : {}),
+    }),
+  );
+}
+
 export const auth = betterAuth({
   basePath: "/api/v1/auth",
   baseURL: process.env.BETTER_AUTH_URL,
@@ -70,18 +95,11 @@ export const auth = betterAuth({
     },
   },
   socialProviders,
-  plugins: [
-    magicLink({
-      sendMagicLink: async ({ email, url }) => {
-        await sendMagicLinkEmail({ to: email, url });
-      },
-    }),
-    ...(oauthProviders.length > 0
-      ? [genericOAuth({ config: oauthProviders })]
-      : []),
-  ],
+  plugins: authPlugins,
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: schema,
   }),
 });
+
+logAuthConfig();
