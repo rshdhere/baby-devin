@@ -10,6 +10,16 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y curl ca-certificates gnupg jq awscli
 
+# SSM Agent — required for Session Manager on private execution hosts (no public IP)
+if ! systemctl is-active --quiet amazon-ssm-agent 2>/dev/null; then
+  tmpdir="$(mktemp -d)"
+  curl -fsSL -o "$tmpdir/amazon-ssm-agent.deb" \
+    https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+  dpkg -i "$tmpdir/amazon-ssm-agent.deb" || apt-get install -f -y
+  rm -rf "$tmpdir"
+  systemctl enable --now amazon-ssm-agent
+fi
+
 # Docker
 if ! command -v docker &>/dev/null; then
   curl -fsSL https://get.docker.com | sh

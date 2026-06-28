@@ -102,6 +102,33 @@ After `terraform apply`, note:
 - `firecracker_hosts_gitops_path` — generated YAML to sync into GitOps
 - `eks_oidc_provider_arn` — install [AWS Load Balancer Controller](https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html) via IRSA in GitOps
 
+## Access execution hosts (private subnet)
+
+Execution hosts have **no public IP**. Use **SSM Session Manager** (not direct SSH from the internet):
+
+```sh
+# Requires enable_ssm_iam = true and a recent terraform apply
+INSTANCE_ID=$(terraform output -json execution_hosts | jq -r '.["fc-01"].instance_id')
+aws ssm start-session --region ap-south-1 --target "$INSTANCE_ID"
+```
+
+If you see `TargetNotConnected`:
+
+1. Confirm `enable_ssm_iam = true` in `terraform.tfvars` and run `terraform apply`
+2. Ensure `devin-infra` IAM policy includes `instance-profile/devin-*` and `ssm:ListTagsForResource` — sync via `infra/iam` (admin creds) or merge to `main` (GitHub Actions **sync-iam-policy** workflow)
+3. Wait 1–2 minutes after apply for the SSM agent to register
+4. Verify registration: `aws ssm describe-instance-information --filters Key=InstanceIds,Values=$INSTANCE_ID`
+
+**Existing hosts** created before SSM was enabled need a one-time instance replace so userdata installs the SSM agent:
+
+```sh
+terraform apply -replace='module.execution_hosts[0].aws_instance.execution_host["fc-01"]'
+```
+
+(New hosts provisioned after the userdata change already include the SSM agent.)
+
+SSH on port 22 is only reachable from `execution_host_admin_ssh_cidr_blocks` **inside the VPC** (e.g. via SSM port forwarding or a bastion), not from the public internet.
+
 ## Post-apply checklist (deployment.md)
 
 1. **Neon** — create Postgres project; set `DATABASE_URL` in GitOps secrets

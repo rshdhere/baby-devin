@@ -67,7 +67,7 @@ module "execution_hosts" {
 
 module "platform_connectivity" {
   source = "./modules/platform-connectivity"
-  count  = var.execution_host_count > 0 && local.primary_scheduler_url != null ? 1 : 0
+  count  = var.execution_host_count > 0 ? 1 : 0
 
   name_prefix                      = local.name_prefix
   scheduler_url                    = local.primary_scheduler_url
@@ -85,18 +85,18 @@ module "platform_connectivity" {
 }
 
 resource "null_resource" "sync_execution_host_config" {
-  for_each = var.sync_execution_host_config && length(local.execution_hosts) > 0 ? {
-    for key, host in local.execution_hosts : key => host.instance_id
+  for_each = var.sync_execution_host_config && var.execution_host_count > 0 ? {
+    for i in range(var.execution_host_count) : format("fc-%02d", i + 1) => i
   } : {}
 
   triggers = {
-    instance_id      = each.value
+    instance_id      = module.execution_hosts[0].hosts[each.key].instance_id
     orchestrator_url = try(module.platform_connectivity[0].orchestrator_url, "")
-    scheduler_url    = local.primary_scheduler_url
+    scheduler_url    = try(module.execution_hosts[0].hosts[each.key].scheduler, "")
   }
 
   provisioner "local-exec" {
-    command     = "${path.module}/scripts/sync-execution-host-config.sh ${each.value} ${var.aws_region} ${local.ssm_parameter_prefix}"
+    command     = "${path.module}/scripts/sync-execution-host-config.sh ${module.execution_hosts[0].hosts[each.key].instance_id} ${var.aws_region} ${local.ssm_parameter_prefix}"
     interpreter = ["bash", "-c"]
   }
 

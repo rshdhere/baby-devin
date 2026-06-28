@@ -147,7 +147,8 @@
       "Resource": [
         "arn:aws:iam::*:role/devin-*",
         "arn:aws:iam::*:role/*-cluster-role",
-        "arn:aws:iam::*:role/*-node-role"
+        "arn:aws:iam::*:role/*-node-role",
+        "arn:aws:iam::*:instance-profile/devin-*"
       ]
     },
     {
@@ -210,6 +211,7 @@
         "ssm:GetParametersByPath",
         "ssm:AddTagsToResource",
         "ssm:RemoveTagsFromResource",
+        "ssm:ListTagsForResource",
         "ssm:DescribeParameters",
         "ssm:SendCommand",
         "ssm:GetCommandInvocation",

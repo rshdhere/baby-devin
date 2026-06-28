@@ -110,7 +110,7 @@ resource "aws_ssm_parameter" "orchestrator_url" {
 }
 
 resource "null_resource" "sync_scheduler_url" {
-  count = var.sync_scheduler_url_to_kubernetes && var.scheduler_url != "" ? 1 : 0
+  count = var.sync_scheduler_url_to_kubernetes ? 1 : 0
 
   triggers = {
     scheduler_url = var.scheduler_url
@@ -128,7 +128,7 @@ resource "null_resource" "sync_scheduler_url" {
 }
 
 resource "local_file" "firecracker_hosts_gitops" {
-  count = var.firecracker_hosts_gitops_path != null && length(var.execution_hosts) > 0 ? 1 : 0
+  count = var.firecracker_hosts_gitops_path != null ? 1 : 0
 
   filename = var.firecracker_hosts_gitops_path
   content = templatefile("${path.module}/templates/firecracker-hosts.yaml.tftpl", {
