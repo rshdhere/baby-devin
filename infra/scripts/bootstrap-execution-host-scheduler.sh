@@ -34,6 +34,8 @@ ExecStart=/usr/bin/docker run --rm --name scheduler \\
   -e SCHEDULER_PORT=9091 \\
   -e ORCHESTRATOR_URL=\${ORCHESTRATOR_URL} \\
   -e DEFAULT_AGENT=mock \\
+  -e SANDBOX_READY_TIMEOUT_SECONDS=120 \\
+  -e RUNTIME_READY_TIMEOUT_SECONDS=60 \\
   ${REGISTRY}/devin-scheduler:${TAG}
 ExecStop=/usr/bin/docker stop scheduler
 

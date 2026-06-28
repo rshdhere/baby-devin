@@ -33,17 +33,13 @@ module "eks" {
 }
 
 locals {
-  execution_hosts = try(module.execution_hosts[0].hosts, {})
-  primary_scheduler_url = try(
-    values(local.execution_hosts)[0].scheduler,
-    null,
-  )
-  ssm_parameter_prefix = "/${local.name_prefix}/platform"
+  enable_execution_hosts = var.execution_host_count > 0
+  ssm_parameter_prefix   = "/${local.name_prefix}/platform"
 }
 
 module "task_queue" {
   source = "./modules/task-queue"
-  count  = var.execution_host_count > 0 ? 1 : 0
+  count  = local.enable_execution_hosts ? 1 : 0
 
   name_prefix = local.name_prefix
   tags        = var.tags
@@ -51,11 +47,11 @@ module "task_queue" {
 
 module "execution_hosts" {
   source = "./modules/execution-hosts"
-  count  = var.execution_host_count > 0 ? 1 : 0
+  count  = local.enable_execution_hosts ? 1 : 0
 
   name_prefix                = local.name_prefix
   task_queue_arn             = try(module.task_queue[0].queue_arn, "")
-  enable_task_queue          = var.execution_host_count > 0
+  enable_task_queue          = local.enable_execution_hosts
   vpc_id                     = module.vpc.vpc_id
   vpc_cidr_block             = module.vpc.vpc_cidr_block
   private_subnet_ids         = module.vpc.private_subnet_ids
@@ -75,14 +71,23 @@ module "execution_hosts" {
   depends_on = [module.task_queue, module.eks]
 }
 
+locals {
+  execution_hosts = try(module.execution_hosts[0].hosts, {})
+  primary_scheduler_url = try(
+    values(local.execution_hosts)[0].scheduler,
+    null,
+  )
+  task_queue_url = try(module.task_queue[0].queue_url, "")
+}
+
 module "platform_connectivity" {
   source = "./modules/platform-connectivity"
-  count  = var.execution_host_count > 0 ? 1 : 0
+  count  = local.enable_execution_hosts ? 1 : 0
 
   name_prefix                      = local.name_prefix
   scheduler_url                    = local.primary_scheduler_url
-  task_queue_url                   = try(module.task_queue[0].queue_url, "")
-  publish_task_queue_url           = var.execution_host_count > 0
+  task_queue_url                   = local.task_queue_url
+  publish_task_queue_url           = local.enable_execution_hosts
   manage_orchestrator_nlb          = var.manage_orchestrator_nlb
   orchestrator_namespace           = var.orchestrator_namespace
   orchestrator_url_override        = var.orchestrator_url_override
@@ -97,14 +102,14 @@ module "platform_connectivity" {
 }
 
 resource "null_resource" "sync_execution_host_config" {
-  for_each = var.sync_execution_host_config && var.execution_host_count > 0 ? {
+  for_each = var.sync_execution_host_config && local.enable_execution_hosts ? {
     for i in range(var.execution_host_count) : format("fc-%02d", i + 1) => i
   } : {}
 
   triggers = {
     instance_id      = module.execution_hosts[0].hosts[each.key].instance_id
     orchestrator_url = try(module.platform_connectivity[0].orchestrator_url, "")
-    task_queue_url   = try(module.task_queue[0].queue_url, "")
+    task_queue_url   = local.task_queue_url
     scheduler_url    = try(module.execution_hosts[0].hosts[each.key].scheduler, "")
     nested_virt      = tostring(var.execution_host_enable_nested_virtualization)
   }
@@ -118,7 +123,7 @@ resource "null_resource" "sync_execution_host_config" {
 }
 
 resource "null_resource" "enable_execution_host_nested_virt" {
-  for_each = var.execution_host_enable_nested_virtualization && var.execution_host_count > 0 ? {
+  for_each = var.execution_host_enable_nested_virtualization && local.enable_execution_hosts ? {
     for i in range(var.execution_host_count) : format("fc-%02d", i + 1) => i
   } : {}
 

@@ -17,6 +17,10 @@ export interface TaskServiceOptions {
   defaultAgent?: AgentProvider;
   eventBus?: EventBus;
   queue?: TaskQueue<ScheduleJob>;
+  /** Max time to wait for orchestrator sandbox phase Running (default 120s). */
+  sandboxReadyTimeoutMs?: number;
+  /** Max time to wait for runtime /health (default 60s). */
+  runtimeReadyTimeoutMs?: number;
 }
 
 type SandboxRecord = {
@@ -36,6 +40,8 @@ export class TaskService {
   private readonly runtimeUrl: string;
   private readonly preferredHost?: string;
   private readonly defaultAgent: AgentProvider;
+  private readonly sandboxReadyTimeoutMs: number;
+  private readonly runtimeReadyTimeoutMs: number;
   private workerStarted = false;
 
   constructor(options: TaskServiceOptions) {
@@ -43,6 +49,12 @@ export class TaskService {
     this.runtimeUrl = options.runtimeUrl.replace(/\/$/, "");
     this.preferredHost = options.preferredHost?.trim() || undefined;
     this.defaultAgent = options.defaultAgent ?? resolveDefaultAgent();
+    this.sandboxReadyTimeoutMs =
+      options.sandboxReadyTimeoutMs ??
+      resolveTimeoutMs("SANDBOX_READY_TIMEOUT_SECONDS", 120);
+    this.runtimeReadyTimeoutMs =
+      options.runtimeReadyTimeoutMs ??
+      resolveTimeoutMs("RUNTIME_READY_TIMEOUT_SECONDS", 60);
     this.eventBus = options.eventBus ?? new EventBus();
     this.queue = options.queue ?? createQueue<ScheduleJob>();
   }
@@ -146,40 +158,13 @@ export class TaskService {
       this.updateTask(task.id, "sandbox_starting", "Creating sandbox");
 
       const runtimeImage = runtimeForAgent(task.agent);
-      const createResponse = await fetch(
-        `${this.orchestratorUrl}/internal/v1/sandboxes`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: sandboxName,
-            spec: {
-              taskId: task.id,
-              runtime: runtimeImage,
-              cpu: 2,
-              memory: "4Gi",
-              ...(this.preferredHost
-                ? { preferredHost: this.preferredHost }
-                : {}),
-            },
-          }),
-        },
-      );
-
-      if (!createResponse.ok && createResponse.status !== 409) {
-        throw new Error(
-          `orchestrator rejected sandbox: ${createResponse.status}`,
-        );
-      }
-
-      if (createResponse.status === 409) {
-        this.emit(
-          "task.scheduled",
-          task.id,
-          "Reusing existing sandbox from prior attempt",
-          { sandboxName },
-        );
-      }
+      await this.ensureSandbox(sandboxName, task.id, {
+        taskId: task.id,
+        runtime: runtimeImage,
+        cpu: 2,
+        memory: "4Gi",
+        ...(this.preferredHost ? { preferredHost: this.preferredHost } : {}),
+      });
 
       const sandbox = await this.waitForSandbox(sandboxName, task.id);
       this.emit("sandbox.started", task.id, "Sandbox microVM is running", {
@@ -481,6 +466,71 @@ export class TaskService {
     return response.json() as Promise<{ html_url: string; number: number }>;
   }
 
+  private async ensureSandbox(
+    sandboxName: string,
+    taskId: string,
+    spec: Record<string, unknown>,
+  ): Promise<void> {
+    const create = async (): Promise<number> => {
+      const response = await fetch(
+        `${this.orchestratorUrl}/internal/v1/sandboxes`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: sandboxName, spec }),
+        },
+      );
+      return response.status;
+    };
+
+    let status = await create();
+    if (status === 409) {
+      const existing = await this.fetchSandbox(sandboxName);
+      const phase = existing?.status?.phase;
+
+      if (phase === "Running") {
+        this.emit(
+          "task.scheduled",
+          taskId,
+          "Reusing running sandbox from prior attempt",
+          { sandboxName, phase },
+        );
+        return;
+      }
+
+      this.emit(
+        "task.scheduled",
+        taskId,
+        "Removing stale sandbox before retry",
+        { sandboxName, phase: phase ?? "unknown" },
+      );
+      await this.deleteSandbox(sandboxName);
+      await this.waitForSandboxDeleted(sandboxName);
+
+      status = await create();
+    }
+
+    if (status !== 202 && status !== 200 && status !== 409) {
+      throw new Error(`orchestrator rejected sandbox: ${status}`);
+    }
+  }
+
+  private async fetchSandbox(
+    sandboxName: string,
+  ): Promise<SandboxRecord | undefined> {
+    try {
+      const response = await fetch(
+        `${this.orchestratorUrl}/internal/v1/sandboxes/${encodeURIComponent(sandboxName)}`,
+      );
+      if (!response.ok) {
+        return undefined;
+      }
+      return (await response.json()) as SandboxRecord;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async deleteSandbox(sandboxName: string): Promise<void> {
     try {
       await fetch(
@@ -492,24 +542,52 @@ export class TaskService {
     }
   }
 
+  private async waitForSandboxDeleted(sandboxName: string): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const sandbox = await this.fetchSandbox(sandboxName);
+      if (!sandbox) {
+        return;
+      }
+      await sleep(500);
+    }
+    throw new Error(`sandbox ${sandboxName} was not deleted before retry`);
+  }
+
   private async waitForSandbox(
     sandboxName: string,
     taskId: string,
   ): Promise<SandboxRecord> {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const response = await fetch(
-        `${this.orchestratorUrl}/internal/v1/sandboxes/${encodeURIComponent(sandboxName)}`,
-      );
-      if (response.ok) {
-        const sandbox = (await response.json()) as SandboxRecord;
-        if (sandbox.status?.phase === "Running") {
+    const deadline = Date.now() + this.sandboxReadyTimeoutMs;
+    let lastPhase = "unknown";
+    let lastMessage = "";
+
+    while (Date.now() < deadline) {
+      const sandbox = await this.fetchSandbox(sandboxName);
+      if (sandbox) {
+        const phase = sandbox.status?.phase ?? "Pending";
+        lastPhase = phase;
+        lastMessage = sandbox.status?.message?.trim() ?? "";
+
+        if (phase === "Running") {
           return sandbox;
+        }
+        if (phase === "Failed") {
+          throw new Error(
+            lastMessage
+              ? `sandbox ${sandboxName} failed: ${lastMessage}`
+              : `sandbox ${sandboxName} failed for task ${taskId}`,
+          );
         }
       }
       await sleep(500);
     }
+
+    const detail = lastMessage
+      ? ` (phase=${lastPhase}, ${lastMessage})`
+      : ` (phase=${lastPhase})`;
     throw new Error(
-      `sandbox ${sandboxName} did not become ready for task ${taskId}`,
+      `sandbox ${sandboxName} did not become ready for task ${taskId} within ${this.sandboxReadyTimeoutMs / 1000}s${detail}`,
     );
   }
 
@@ -517,7 +595,8 @@ export class TaskService {
     runtime: RuntimeClient,
     taskId: string,
   ): Promise<void> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const deadline = Date.now() + this.runtimeReadyTimeoutMs;
+    while (Date.now() < deadline) {
       try {
         const health = await runtime.health();
         if (health.status === "ok") {
@@ -528,7 +607,9 @@ export class TaskService {
       }
       await sleep(500);
     }
-    throw new Error(`runtime not ready for task ${taskId}`);
+    throw new Error(
+      `runtime not ready for task ${taskId} within ${this.runtimeReadyTimeoutMs / 1000}s`,
+    );
   }
 
   private updateTask(
@@ -602,6 +683,18 @@ function resolveDefaultAgent(): AgentProvider {
     return raw;
   }
   return "mock";
+}
+
+function resolveTimeoutMs(envKey: string, defaultSeconds: number): number {
+  const raw = process.env[envKey]?.trim();
+  if (!raw) {
+    return defaultSeconds * 1000;
+  }
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return defaultSeconds * 1000;
+  }
+  return seconds * 1000;
 }
 
 function sleep(ms: number): Promise<void> {

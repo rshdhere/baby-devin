@@ -48,7 +48,8 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			// Cold snapshot restores can exceed 30s (VM boot + runtime health).
+			Timeout: 120 * time.Second,
 		},
 	}
 }
