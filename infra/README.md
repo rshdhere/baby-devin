@@ -99,6 +99,7 @@ After `terraform apply`, note:
 - `execution_hosts` — private IPs for GitOps `FirecrackerHost` CRs
 - `scheduler_url` — primary scheduler URL for `devin-server` (`SCHEDULER_URL`)
 - `orchestrator_url` — orchestrator endpoint for execution host schedulers
+- `task_queue_url` — SQS queue for durable scheduler jobs (execution hosts use `QUEUE_DRIVER=sqs` via SSM)
 - `firecracker_hosts_gitops_path` — generated YAML to sync into GitOps
 - `eks_oidc_provider_arn` — install [AWS Load Balancer Controller](https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html) via IRSA in GitOps
 
@@ -184,6 +185,8 @@ ls -l /dev/kvm                             # must be a character device
 
 Sync `infra/generated/firecracker-hosts.yaml` into `rshdhere/ops` (`staging/devin/overlays/external/firecracker-hosts.yaml`) so the orchestrator registers the host IP.
 
+For staging orchestrator NLB (fixes `orchestrator rejected sandbox: 500` on staging.devin.baby), apply the GitOps handoff in the ops repo — see issue/chat context for `orchestrator-lb.yaml` in the staging-external overlay.
+
 ---
 
 1. **Neon** — create Postgres project; set `DATABASE_URL` in GitOps secrets
@@ -197,7 +200,7 @@ Sync `infra/generated/firecracker-hosts.yaml` into `rshdhere/ops` (`staging/devi
 Terraform now also:
 
 - Creates an **internal NLB** Service for `devin-orchestrator` (port 9090)
-- Publishes **`scheduler_url`** and **`orchestrator_url`** to SSM (`/devin-production/platform/*`)
+- Publishes **`scheduler_url`**, **`orchestrator_url`**, and **`task_queue_url`** to SSM (`/devin-production/platform/*`)
 - Patches **`SCHEDULER_URL`** into `devin-server` secrets in `devin-app` and `devin-staging` (requires `kubectl` configured)
 - Bootstraps execution hosts via **SSM** to start the scheduler with the correct `ORCHESTRATOR_URL`
 
@@ -216,7 +219,7 @@ Root `terraform.tfvars` keys (do not use module-internal names):
 | Variable | Purpose |
 | --- | --- |
 | `enable_ssm_iam` | EC2 instance profile for Session Manager on execution hosts |
-| `manage_ssm_parameters` | Write scheduler/orchestrator URLs to SSM |
+| `manage_ssm_parameters` | Write scheduler/orchestrator/task-queue URLs to SSM |
 | `sync_execution_host_config` | SSM Run Command bootstrap after apply |
 | `sync_scheduler_url_to_kubernetes` | Patch `SCHEDULER_URL` on devin-server deployments |
 

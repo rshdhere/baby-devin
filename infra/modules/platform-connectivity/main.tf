@@ -109,6 +109,18 @@ resource "aws_ssm_parameter" "orchestrator_url" {
   depends_on = [time_sleep.wait_for_orchestrator_nlb]
 }
 
+resource "aws_ssm_parameter" "task_queue_url" {
+  count = var.manage_ssm_parameters && var.publish_task_queue_url ? 1 : 0
+
+  name  = "${local.ssm_prefix}/task_queue_url"
+  type  = "String"
+  value = var.task_queue_url
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-task-queue-url"
+  })
+}
+
 resource "null_resource" "sync_scheduler_url" {
   count = var.sync_scheduler_url_to_kubernetes ? 1 : 0
 

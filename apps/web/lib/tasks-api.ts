@@ -147,6 +147,9 @@ export function subscribeToTaskEvents(
       if (controller.signal.aborted) {
         return;
       }
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       onError?.(
         error instanceof Error ? error : new Error("Event stream error"),
       );

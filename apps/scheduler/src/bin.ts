@@ -4,6 +4,7 @@ import { formatSSE, TaskService } from "@devin/scheduler";
 const port = Number(process.env.SCHEDULER_PORT ?? 9091);
 const orchestratorUrl = process.env.ORCHESTRATOR_URL ?? "http://localhost:9090";
 const runtimeUrl = process.env.RUNTIME_URL ?? "http://localhost:8081";
+const queueDriver = process.env.QUEUE_DRIVER ?? "memory";
 const defaultAgent = process.env.DEFAULT_AGENT as
   | "cursor"
   | "claude"
@@ -121,7 +122,9 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`scheduler listening @ http://localhost:${port}`);
+  console.log(
+    `scheduler listening @ http://localhost:${port} (queue=${queueDriver})`,
+  );
 });
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {

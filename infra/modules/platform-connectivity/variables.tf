@@ -8,6 +8,18 @@ variable "scheduler_url" {
   type        = string
 }
 
+variable "task_queue_url" {
+  description = "SQS queue URL for scheduler task jobs."
+  type        = string
+  default     = ""
+}
+
+variable "publish_task_queue_url" {
+  description = "Write task_queue_url to SSM when the queue exists."
+  type        = bool
+  default     = false
+}
+
 variable "manage_orchestrator_nlb" {
   description = "Create an internal NLB Service for devin-orchestrator in Kubernetes."
   type        = bool

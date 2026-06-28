@@ -5,10 +5,11 @@ import type { TaskQueue } from "./types.js";
 export type QueueDriver = "memory" | "sqs";
 
 export function createQueue<T>(): TaskQueue<T> {
-  const driver = (process.env.QUEUE_DRIVER ?? "memory") as QueueDriver;
+  const queueUrl = process.env.SQS_QUEUE_URL?.trim();
+  const driver = (process.env.QUEUE_DRIVER ??
+    (queueUrl ? "sqs" : "memory")) as QueueDriver;
 
   if (driver === "sqs") {
-    const queueUrl = process.env.SQS_QUEUE_URL?.trim();
     if (!queueUrl) {
       throw new Error("SQS_QUEUE_URL is required when QUEUE_DRIVER=sqs");
     }

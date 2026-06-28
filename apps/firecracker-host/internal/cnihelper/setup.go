@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -203,6 +204,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func SetLinkUp(device string) error {
+	return setLinkUp([]string{"ip", "link", "set", device, "up"})
+}
+
+func SetLinkUpInNetNS(netns, device string) error {
+	return setLinkUp([]string{"ip", "netns", "exec", netns, "ip", "link", "set", device, "up"})
+}
+
+func setLinkUp(args []string) error {
+	cmd := exec.Command(args[0], args[1:]...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // GuestIPArgs converts a stored guest IP into CNI runtime args.

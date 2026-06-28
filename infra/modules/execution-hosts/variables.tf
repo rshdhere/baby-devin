@@ -97,3 +97,15 @@ variable "enable_ssm_iam" {
   type        = bool
   default     = true
 }
+
+variable "task_queue_arn" {
+  description = "SQS task queue ARN for scheduler job processing."
+  type        = string
+  default     = ""
+}
+
+variable "enable_task_queue" {
+  description = "Grant SQS permissions on the execution host IAM role."
+  type        = bool
+  default     = false
+}

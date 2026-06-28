@@ -104,6 +104,16 @@ output "ssm_orchestrator_url_parameter" {
   value       = try(module.platform_connectivity[0].ssm_orchestrator_url_parameter, null)
 }
 
+output "task_queue_url" {
+  description = "SQS queue URL for scheduler task jobs."
+  value       = try(module.task_queue[0].queue_url, null)
+}
+
+output "ssm_task_queue_url_parameter" {
+  description = "SSM parameter storing task_queue_url."
+  value       = try(module.platform_connectivity[0].ssm_task_queue_url_parameter, null)
+}
+
 output "configure_kubectl" {
   description = "Command to configure kubectl for the EKS cluster."
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"

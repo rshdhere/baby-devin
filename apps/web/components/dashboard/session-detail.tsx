@@ -61,22 +61,48 @@ export function SessionDetail({
   }, [initialTask]);
 
   useEffect(() => {
+    setEvents([]);
+    setStreamError(null);
+
+    const taskId = task.id;
+    let cancelled = false;
+
     const unsubscribe = subscribeToTaskEvents(
-      task.id,
+      taskId,
       (event) => {
-        setEvents((current) => [...current, event]);
+        if (cancelled || event.taskId !== taskId) {
+          return;
+        }
+
+        setEvents((current) => {
+          if (current.some((item) => item.id === event.id)) {
+            return current;
+          }
+          return [...current, event].sort((a, b) =>
+            a.timestamp.localeCompare(b.timestamp),
+          );
+        });
 
         if (event.type === "task.completed" || event.type === "task.failed") {
-          void fetchTask(task.id).then((updated) => {
-            setTask(updated);
-            void refreshTasks();
+          void fetchTask(taskId).then((updated) => {
+            if (!cancelled) {
+              setTask(updated);
+              void refreshTasks();
+            }
           });
         }
       },
-      (error) => setStreamError(error.message),
+      (error) => {
+        if (!cancelled) {
+          setStreamError(error.message);
+        }
+      },
     );
 
-    return unsubscribe;
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [task.id, refreshTasks]);
 
   useEffect(() => {

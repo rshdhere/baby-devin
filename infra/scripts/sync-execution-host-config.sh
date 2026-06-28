@@ -30,6 +30,9 @@ read_ssm() {
 }
 
 ORCHESTRATOR_URL="\$(read_ssm "\$SSM_PREFIX/orchestrator_url")"
+TASK_QUEUE_URL="\$(read_ssm "\$SSM_PREFIX/task_queue_url")"
+SCHEDULER_NEEDS_RESTART=0
+
 if [[ -z "\$ORCHESTRATOR_URL" || "\$ORCHESTRATOR_URL" == http://REPLACE_AFTER_ORCHESTRATOR_NLB:* ]]; then
   echo "Orchestrator URL not ready in SSM yet (\$SSM_PREFIX/orchestrator_url)" >&2
 else
@@ -38,6 +41,23 @@ else
 [Service]
 Environment=ORCHESTRATOR_URL=\$ORCHESTRATOR_URL
 EOF
+  SCHEDULER_NEEDS_RESTART=1
+fi
+
+if [[ -n "\$TASK_QUEUE_URL" ]]; then
+  mkdir -p /etc/systemd/system/devin-scheduler.service.d
+  cat >/etc/systemd/system/devin-scheduler.service.d/queue.conf <<EOF
+[Service]
+Environment=QUEUE_DRIVER=sqs
+Environment=SQS_QUEUE_URL=\$TASK_QUEUE_URL
+Environment=AWS_REGION=\$AWS_REGION
+EOF
+  SCHEDULER_NEEDS_RESTART=1
+else
+  rm -f /etc/systemd/system/devin-scheduler.service.d/queue.conf
+fi
+
+if [[ "\$SCHEDULER_NEEDS_RESTART" -eq 1 ]]; then
   systemctl daemon-reload
 fi
 
@@ -46,6 +66,9 @@ if [[ -d /var/lib/devin/snapshots/nextjs ]] || [[ -d /var/lib/devin/snapshots/ag
 fi
 
 systemctl enable --now devin-scheduler.service 2>/dev/null || true
+if [[ "\$SCHEDULER_NEEDS_RESTART" -eq 1 ]]; then
+  systemctl restart devin-scheduler.service 2>/dev/null || true
+fi
 SCRIPT
   chmod +x /usr/local/bin/devin-sync-platform-config.sh
 fi

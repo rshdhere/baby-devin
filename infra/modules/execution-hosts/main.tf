@@ -125,10 +125,10 @@ resource "aws_instance" "execution_host" {
 
   user_data = base64encode(templatefile("${path.module}/userdata.sh.tftpl", {
     host_name            = "${var.name_prefix}-${each.key}"
-    container_registry     = var.container_registry
-    image_tag              = var.image_tag
-    aws_region             = var.aws_region
-    ssm_parameter_prefix   = var.ssm_parameter_prefix
+    container_registry   = var.container_registry
+    image_tag            = var.image_tag
+    aws_region           = var.aws_region
+    ssm_parameter_prefix = var.ssm_parameter_prefix
   }))
 
   tags = merge(var.tags, {

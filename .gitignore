@@ -60,3 +60,4 @@ infra/*.tfvars
 
 # Vault local state
 vault/.local/
+infra/tfplan

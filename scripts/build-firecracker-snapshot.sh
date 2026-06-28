@@ -74,7 +74,7 @@ if [[ -z "${TAP_DEVICE}" || "${TAP_DEVICE}" == "null" ]]; then
 fi
 
 echo "starting firecracker to create golden snapshot for ${RUNTIME} (${VCPU_COUNT} vCPU / ${MEM_SIZE_MIB} MiB)..."
-"${FC_BIN}" --api-sock "${SOCKET}" &
+ip netns exec "${CONTAINER_ID}" "${FC_BIN}" --api-sock "${SOCKET}" &
 FC_PID=$!
 
 for _ in $(seq 1 30); do
@@ -86,9 +86,17 @@ curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/machine-config" \
   -H 'Content-Type: application/json' \
   -d "{\"vcpu_count\":${VCPU_COUNT},\"mem_size_mib\":${MEM_SIZE_MIB},\"smt\":false}" >/dev/null
 
+# Configure guest eth0 before init runs; ptp CNI peers the host at 192.168.127.1.
+HOST_GW="$(ip route get "${GUEST_IP}" 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+if [[ -z "${HOST_GW}" ]]; then
+  HOST_GW="192.168.127.1"
+fi
+IP_BOOTARG="ip=${GUEST_IP}::${HOST_GW}:255.255.255.0::eth0:off"
+BOOT_ARGS="console=ttyS0 reboot=k panic=1 pci=off ${IP_BOOTARG} init=/usr/local/bin/devin-runtime-supervisor"
+
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/boot-source" \
   -H 'Content-Type: application/json' \
-  -d "{\"kernel_image_path\":\"${KERNEL}\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 pci=off init=/usr/local/bin/devin-runtime-supervisor\"}" >/dev/null
+  -d "{\"kernel_image_path\":\"${KERNEL}\",\"boot_args\":\"${BOOT_ARGS}\"}" >/dev/null
 
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/drives/root" \
   -H 'Content-Type: application/json' \
@@ -101,6 +109,14 @@ curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/network-interfaces/
 curl -fsS --unix-socket "${SOCKET}" -X PUT "http://localhost/actions" \
   -H 'Content-Type: application/json' \
   -d '{"action_type":"InstanceStart"}' >/dev/null
+
+for _ in $(seq 1 10); do
+  if ip netns exec "${CONTAINER_ID}" ip link set "${TAP_DEVICE}" up 2>/dev/null; then
+    state="$(ip netns exec "${CONTAINER_ID}" ip -o link show "${TAP_DEVICE}" 2>/dev/null | awk '{print $9}')"
+    [[ "${state}" == "UP" ]] && break
+  fi
+  sleep 0.2
+done
 
 echo "waiting for runtime supervisor to become healthy at http://${GUEST_IP}:${RUNTIME_PORT}/health ..."
 for _ in $(seq 1 60); do

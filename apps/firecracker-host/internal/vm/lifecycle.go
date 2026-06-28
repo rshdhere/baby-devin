@@ -1,11 +1,8 @@
 package vm
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -114,28 +111,19 @@ func (l *Launcher) Restore(ctx context.Context, vmID, name, runtime string, cpu 
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
 
-	machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
-		Name: "fcinit.LoadSnapshot",
-		Fn: func(ctx context.Context, m *firecracker.Machine) error {
-			tapDevice, err := tapDeviceFromMachine(m)
-			if err != nil {
-				return err
-			}
-			slog.Info("loading firecracker snapshot with network override",
-				"vmId", vmID,
-				"runtime", runtime,
-				"iface", meta.NetworkIfaceID,
-				"tap", tapDevice,
-				"guestIP", meta.GuestIP,
-			)
-			return loadSnapshotWithOverrides(ctx, socketPath, meta.MemPath, meta.SnapshotPath, meta.NetworkIfaceID, tapDevice, true)
-		},
-	})
-
 	if err := machine.Start(vmmCtx); err != nil {
 		cancel()
 		_ = machine.StopVMM()
 		return nil, fmt.Errorf("start firecracker machine: %w", err)
+	}
+
+	if tapDevice, err := tapDeviceFromMachine(machine); err == nil {
+		for attempt := 0; attempt < 10; attempt++ {
+			if upErr := cnihelper.SetLinkUpInNetNS(vmID, tapDevice); upErr == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 
 	ip, err := machineIP(machine)
@@ -182,59 +170,6 @@ func tapDeviceFromMachine(machine *firecracker.Machine) (string, error) {
 		return "", fmt.Errorf("firecracker machine has no tap device from CNI setup")
 	}
 	return staticCfg.HostDevName, nil
-}
-
-type snapshotLoadBody struct {
-	MemFilePath      string            `json:"mem_file_path"`
-	SnapshotPath     string            `json:"snapshot_path"`
-	ResumeVM         bool              `json:"resume_vm"`
-	NetworkOverrides []networkOverride `json:"network_overrides,omitempty"`
-}
-
-type networkOverride struct {
-	IfaceID     string `json:"iface_id"`
-	HostDevName string `json:"host_dev_name"`
-}
-
-func loadSnapshotWithOverrides(ctx context.Context, socketPath, memPath, snapPath, ifaceID, tapDevice string, resume bool) error {
-	body := snapshotLoadBody{
-		MemFilePath:  memPath,
-		SnapshotPath: snapPath,
-		ResumeVM:     resume,
-		NetworkOverrides: []networkOverride{
-			{IfaceID: ifaceID, HostDevName: tapDevice},
-		},
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/snapshot/load", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", socketPath)
-			},
-		},
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("snapshot load request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("snapshot load returned %s: %s", resp.Status, string(raw))
-	}
-	return nil
 }
 
 func machineIP(machine *firecracker.Machine) (net.IP, error) {

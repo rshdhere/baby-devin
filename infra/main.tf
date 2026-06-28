@@ -41,11 +41,21 @@ locals {
   ssm_parameter_prefix = "/${local.name_prefix}/platform"
 }
 
+module "task_queue" {
+  source = "./modules/task-queue"
+  count  = var.execution_host_count > 0 ? 1 : 0
+
+  name_prefix = local.name_prefix
+  tags        = var.tags
+}
+
 module "execution_hosts" {
   source = "./modules/execution-hosts"
   count  = var.execution_host_count > 0 ? 1 : 0
 
   name_prefix                = local.name_prefix
+  task_queue_arn             = try(module.task_queue[0].queue_arn, "")
+  enable_task_queue          = var.execution_host_count > 0
   vpc_id                     = module.vpc.vpc_id
   vpc_cidr_block             = module.vpc.vpc_cidr_block
   private_subnet_ids         = module.vpc.private_subnet_ids
@@ -62,7 +72,7 @@ module "execution_hosts" {
   enable_ssm_iam             = var.enable_ssm_iam
   tags                       = var.tags
 
-  depends_on = [module.eks]
+  depends_on = [module.task_queue, module.eks]
 }
 
 module "platform_connectivity" {
@@ -71,6 +81,8 @@ module "platform_connectivity" {
 
   name_prefix                      = local.name_prefix
   scheduler_url                    = local.primary_scheduler_url
+  task_queue_url                   = try(module.task_queue[0].queue_url, "")
+  publish_task_queue_url           = var.execution_host_count > 0
   manage_orchestrator_nlb          = var.manage_orchestrator_nlb
   orchestrator_namespace           = var.orchestrator_namespace
   orchestrator_url_override        = var.orchestrator_url_override
@@ -92,6 +104,7 @@ resource "null_resource" "sync_execution_host_config" {
   triggers = {
     instance_id      = module.execution_hosts[0].hosts[each.key].instance_id
     orchestrator_url = try(module.platform_connectivity[0].orchestrator_url, "")
+    task_queue_url   = try(module.task_queue[0].queue_url, "")
     scheduler_url    = try(module.execution_hosts[0].hosts[each.key].scheduler, "")
     nested_virt      = tostring(var.execution_host_enable_nested_virtualization)
   }

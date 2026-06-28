@@ -72,3 +72,26 @@ resource "aws_iam_instance_profile" "execution_host" {
   name_prefix = "${var.name_prefix}-fc-host-"
   role        = aws_iam_role.execution_host[0].name
 }
+
+resource "aws_iam_role_policy" "execution_host_sqs" {
+  count = var.enable_ssm_iam && var.enable_task_queue ? 1 : 0
+
+  name_prefix = "${var.name_prefix}-fc-host-sqs-"
+  role        = aws_iam_role.execution_host[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ChangeMessageVisibility",
+      ]
+      Resource = var.task_queue_arn
+    }]
+  })
+}

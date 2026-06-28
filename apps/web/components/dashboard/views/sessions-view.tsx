@@ -78,7 +78,11 @@ export function SessionsView() {
   if (activeTask) {
     return (
       <div className="flex min-h-0 w-full max-w-[900px] flex-1 flex-col self-center">
-        <SessionDetail task={activeTask} onBack={() => selectTask(null)} />
+        <SessionDetail
+          key={activeTask.id}
+          task={activeTask}
+          onBack={() => selectTask(null)}
+        />
       </div>
     );
   }

@@ -166,9 +166,18 @@ export class TaskService {
         },
       );
 
-      if (!createResponse.ok) {
+      if (!createResponse.ok && createResponse.status !== 409) {
         throw new Error(
           `orchestrator rejected sandbox: ${createResponse.status}`,
+        );
+      }
+
+      if (createResponse.status === 409) {
+        this.emit(
+          "task.scheduled",
+          task.id,
+          "Reusing existing sandbox from prior attempt",
+          { sandboxName },
         );
       }
 
