@@ -116,6 +116,8 @@ ExecStart=/usr/bin/docker run --rm --name scheduler \\
   --network host \\
   -e SCHEDULER_PORT=9091 \\
   -e ORCHESTRATOR_URL=\${ORCHESTRATOR_URL} \\
+  -e QUEUE_DRIVER=\${QUEUE_DRIVER} \\
+  -e SQS_QUEUE_URL=\${SQS_QUEUE_URL} \\
   -e AWS_REGION=${AWS_REGION} \\
   -e DEFAULT_AGENT=mock \\
   ${CONTAINER_REGISTRY}/devin-scheduler:${IMAGE_TAG}
