@@ -4,6 +4,8 @@ import { formatSSE, TaskService } from "@devin/scheduler";
 const port = Number(process.env.SCHEDULER_PORT ?? 9091);
 const orchestratorUrl = process.env.ORCHESTRATOR_URL ?? "http://localhost:9090";
 const runtimeUrl = process.env.RUNTIME_URL ?? "http://localhost:8081";
+const firecrackerHostUrl =
+  process.env.FIRECRACKER_HOST_URL?.trim() || undefined;
 const queueDriver = process.env.QUEUE_DRIVER ?? "memory";
 const defaultAgent = process.env.DEFAULT_AGENT as
   | "cursor"
@@ -15,6 +17,7 @@ const preferredHost = process.env.SCHEDULER_HOST_NAME?.trim() || undefined;
 const tasks = new TaskService({
   orchestratorUrl,
   runtimeUrl,
+  firecrackerHostUrl,
   preferredHost,
   defaultAgent,
 });
@@ -27,6 +30,22 @@ const server = createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v1/diagnostics") {
+    try {
+      const diagnostics = await tasks.getInfraDiagnostics();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(diagnostics));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : "diagnostics failed",
+        }),
+      );
+    }
     return;
   }
 
@@ -76,7 +95,8 @@ const server = createServer(async (req, res) => {
 
   const taskMatch = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)$/);
   if (req.method === "GET" && taskMatch) {
-    const task = tasks.getTask(taskMatch[1]!);
+    const taskId = taskMatch[1]!;
+    const task = tasks.getTask(taskId);
     if (!task) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "task not found" }));
@@ -84,6 +104,33 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(task));
+    return;
+  }
+
+  const diagnosticsMatch = url.pathname.match(
+    /^\/api\/v1\/tasks\/([^/]+)\/diagnostics$/,
+  );
+  if (req.method === "GET" && diagnosticsMatch) {
+    const taskId = diagnosticsMatch[1]!;
+    const task = tasks.getTask(taskId);
+    if (!task) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "task not found" }));
+      return;
+    }
+
+    try {
+      const diagnostics = await tasks.getTaskDiagnostics(taskId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(diagnostics));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : "diagnostics failed",
+        }),
+      );
+    }
     return;
   }
 

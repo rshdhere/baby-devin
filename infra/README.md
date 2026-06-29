@@ -91,6 +91,24 @@ On **EKS**, add a `kubernetes.io/dockerconfigjson` secret and reference it in yo
 
 On **execution hosts**, run `docker login` before enabling the systemd units if repos are private.
 
+### CI/CD (execution plane)
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| **Registry** | push to `main` | Builds and pushes all images including `devin-scheduler` and `devin-firecracker-host` |
+| **Deploy execution hosts** | after Registry on `main`; or manual | SSM: `docker pull` + restart scheduler and firecracker-host on EC2 |
+| **build-check** | push / PR | Compiles Go services and dry-builds the scheduler Docker image |
+
+Execution hosts are **not** rolled by GitOps. Runtime golden snapshots require a manual deploy with `rebuild_runtime_snapshots=true` or `./infra/scripts/run-ssm-bootstrap-snapshots.sh`.
+
+GitHub variables: `AWS_IAM_SYNC_ROLE_ARN` (OIDC), optional `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION`, `DEVIN_NAME_PREFIX`.
+
+Manual deploy:
+
+```bash
+DEVIN_IMAGE_TAG=<git-sha> ./infra/scripts/deploy-execution-host-images.sh --discover
+```
+
 ## Outputs
 
 After `terraform apply`, note:

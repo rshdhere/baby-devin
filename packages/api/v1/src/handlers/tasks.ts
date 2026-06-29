@@ -6,7 +6,9 @@ import { Router } from "express";
 import { authenticatedCloneUrl, getGitHubAccessToken } from "../lib/github.js";
 import {
   createTask,
+  getInfraDiagnostics,
   getTask,
+  getTaskDiagnostics,
   listTasks,
   streamTaskEvents,
 } from "../lib/scheduler.js";
@@ -93,6 +95,24 @@ tasksRouter.post("/", async (req, res) => {
           : undefined,
     });
 
+    res.status(response.status).json(await response.json());
+  } catch (error) {
+    respondSchedulerFailure(res, error);
+  }
+});
+
+tasksRouter.get("/diagnostics/infra", async (_req, res) => {
+  try {
+    const response = await getInfraDiagnostics();
+    res.status(response.status).json(await response.json());
+  } catch (error) {
+    respondSchedulerFailure(res, error);
+  }
+});
+
+tasksRouter.get("/:id/diagnostics", async (req, res) => {
+  try {
+    const response = await getTaskDiagnostics(req.params.id);
     res.status(response.status).json(await response.json());
   } catch (error) {
     respondSchedulerFailure(res, error);

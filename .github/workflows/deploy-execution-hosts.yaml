@@ -1,0 +1,117 @@
+name: Deploy execution hosts
+
+# Rolls devin-scheduler and devin-firecracker-host on EC2 execution hosts after
+# Registry pushes new images. Runtime golden snapshots are NOT rebuilt here —
+# use workflow_dispatch with rebuild_runtime_snapshots when runtime/ changes.
+on:
+  workflow_run:
+    workflows: ["Registry"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag (default: commit SHA on main, or latest)"
+        required: false
+      instance_ids:
+        description: "Comma-separated EC2 instance IDs (default: discover by tag)"
+        required: false
+      rebuild_runtime_snapshots:
+        description: "Rebuild Firecracker golden snapshots on hosts (slow, 30–90 min)"
+        type: boolean
+        default: false
+      aws_region:
+        description: "AWS region for execution hosts"
+        required: false
+        default: ap-south-1
+
+concurrency:
+  group: deploy-execution-hosts
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.image_tag }}" ]]; then
+            tag="${{ github.event.inputs.image_tag }}"
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            tag="${{ github.event.workflow_run.head_sha }}"
+          else
+            tag="${{ github.sha }}"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Deploying execution host images with tag: ${tag}"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_DEPLOY_ROLE_ARN || vars.AWS_IAM_SYNC_ROLE_ARN }}
+          aws-region: ${{ github.event.inputs.aws_region || vars.AWS_REGION || 'ap-south-1' }}
+
+      - name: Deploy scheduler and firecracker-host
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region || vars.AWS_REGION || 'ap-south-1' }}
+          DEVIN_IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          DEVIN_CONTAINER_REGISTRY: docker.io/${{ secrets.DOCKERHUB_USERNAME }}
+          DEVIN_NAME_PREFIX: ${{ vars.DEVIN_NAME_PREFIX || 'devin-production' }}
+        run: |
+          set -euo pipefail
+          chmod +x infra/scripts/deploy-execution-host-images.sh
+
+          ids="${{ github.event.inputs.instance_ids }}"
+          if [[ -n "${ids}" ]]; then
+            # shellcheck disable=SC2206
+            instances=(${ids//,/ })
+            infra/scripts/deploy-execution-host-images.sh "${instances[@]}"
+          else
+            infra/scripts/deploy-execution-host-images.sh --discover
+          fi
+
+      - name: Rebuild runtime snapshots (optional)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.rebuild_runtime_snapshots == 'true'
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region || vars.AWS_REGION || 'ap-south-1' }}
+        run: |
+          set -euo pipefail
+          chmod +x infra/scripts/run-ssm-bootstrap-snapshots.sh
+
+          ids="${{ github.event.inputs.instance_ids }}"
+          if [[ -n "${ids}" ]]; then
+            IFS=',' read -ra instances <<< "${ids}"
+          else
+            mapfile -t instances < <(
+              aws ec2 describe-instances \
+                --region "${AWS_REGION}" \
+                --filters \
+                  "Name=tag:Role,Values=firecracker-execution-host" \
+                  "Name=instance-state-name,Values=running" \
+                --query 'Reservations[].Instances[].InstanceId' \
+                --output text | tr '\t' '\n' | sed '/^$/d'
+            )
+          fi
+
+          if ((${#instances[@]} == 0)); then
+            echo "No execution hosts found for snapshot rebuild" >&2
+            exit 1
+          fi
+
+          for instance_id in "${instances[@]}"; do
+            echo "Rebuilding snapshots on ${instance_id}..."
+            infra/scripts/run-ssm-bootstrap-snapshots.sh "${instance_id}" "${AWS_REGION}"
+          done

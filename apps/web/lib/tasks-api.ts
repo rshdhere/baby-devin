@@ -23,6 +23,7 @@ export interface Task {
   prUrl?: string;
   title?: string;
   message?: string;
+  sandboxName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,7 +31,11 @@ export interface Task {
 export type TaskEventType =
   | "task.created"
   | "task.scheduled"
+  | "sandbox.requested"
+  | "sandbox.provisioning"
   | "sandbox.started"
+  | "sandbox.failed"
+  | "runtime.waiting"
   | "runtime.ready"
   | "agent.running"
   | "agent.log"
@@ -49,6 +54,50 @@ export interface TaskEvent {
   message: string;
   timestamp: string;
   data?: Record<string, unknown>;
+}
+
+export interface ServiceProbe {
+  url: string;
+  reachable: boolean;
+  status?: string;
+  error?: string;
+  latencyMs?: number;
+}
+
+export interface FirecrackerHostStatus {
+  host?: string;
+  readyVMs?: number;
+  activeVMs?: number;
+  capacityCPU?: number;
+  usedCPU?: number;
+  defaultRuntime?: string;
+}
+
+export interface SandboxSummary {
+  name: string;
+  phase: string;
+  message?: string;
+  taskId?: string;
+  runtime?: string;
+  vmId?: string;
+  host?: string;
+}
+
+export interface InfraDiagnostics {
+  checkedAt: string;
+  orchestrator: ServiceProbe;
+  firecrackerHost?: ServiceProbe & FirecrackerHostStatus;
+  sandboxes: {
+    total: number;
+    byPhase: Record<string, number>;
+    items: SandboxSummary[];
+  };
+}
+
+export interface TaskDiagnostics {
+  taskId: string;
+  sandboxName?: string;
+  sandbox?: SandboxSummary;
 }
 
 const tasksUrl = `${authConfig.baseURL}/api/v1/tasks`;
@@ -87,6 +136,23 @@ export async function fetchTask(id: string): Promise<Task> {
     credentials: "include",
   });
   return parseResponse<Task>(response);
+}
+
+export async function fetchInfraDiagnostics(): Promise<InfraDiagnostics> {
+  const response = await fetch(`${tasksUrl}/diagnostics/infra`, {
+    credentials: "include",
+  });
+  return parseResponse<InfraDiagnostics>(response);
+}
+
+export async function fetchTaskDiagnostics(
+  id: string,
+): Promise<TaskDiagnostics> {
+  const response = await fetch(
+    `${tasksUrl}/${encodeURIComponent(id)}/diagnostics`,
+    { credentials: "include" },
+  );
+  return parseResponse<TaskDiagnostics>(response);
 }
 
 export function subscribeToTaskEvents(
@@ -180,4 +246,74 @@ export function taskStatusLabel(status: TaskStatus): string {
     default:
       return status;
   }
+}
+
+export function eventTypeLabel(type: TaskEventType): string {
+  switch (type) {
+    case "sandbox.requested":
+      return "Sandbox request";
+    case "sandbox.provisioning":
+      return "Sandbox provisioning";
+    case "sandbox.started":
+      return "Sandbox ready";
+    case "sandbox.failed":
+      return "Sandbox error";
+    case "runtime.waiting":
+      return "Runtime health";
+    case "runtime.ready":
+      return "Runtime ready";
+    case "agent.running":
+      return "Agent";
+    case "agent.log":
+      return "Agent log";
+    case "agent.tool":
+      return "Tool";
+    default:
+      return type.replace(/\./g, " ");
+  }
+}
+
+export function formatEventData(data?: Record<string, unknown>): string[] {
+  if (!data) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const orderedKeys = [
+    "phase",
+    "message",
+    "sandboxName",
+    "runtime",
+    "runtimeURL",
+    "vmId",
+    "host",
+    "orchestratorUrl",
+    "timeoutSeconds",
+    "status",
+    "error",
+  ];
+
+  for (const key of orderedKeys) {
+    const value = data[key];
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    lines.push(`${key}: ${String(value)}`);
+  }
+
+  for (const [key, value] of Object.entries(data)) {
+    if (orderedKeys.includes(key)) {
+      continue;
+    }
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    if (typeof value === "object") {
+      lines.push(`${key}: ${JSON.stringify(value)}`);
+    } else {
+      lines.push(`${key}: ${String(value)}`);
+    }
+  }
+
+  return lines;
 }

@@ -116,6 +116,7 @@ ExecStart=/usr/bin/docker run --rm --name scheduler \\
   --network host \\
   -e SCHEDULER_PORT=9091 \\
   -e ORCHESTRATOR_URL=\${ORCHESTRATOR_URL} \\
+  -e FIRECRACKER_HOST_URL=http://127.0.0.1:9092 \\
   -e QUEUE_DRIVER=\${QUEUE_DRIVER} \\
   -e SQS_QUEUE_URL=\${SQS_QUEUE_URL} \\
   -e AWS_REGION=${AWS_REGION} \\

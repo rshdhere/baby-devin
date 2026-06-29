@@ -2,6 +2,12 @@ import { RuntimeClient } from "@devin/agent-sdk";
 import { EventBus } from "@devin/events";
 import type { TaskEventType } from "@devin/events";
 import { createQueue, type TaskQueue } from "@devin/queue";
+import {
+  collectInfraDiagnostics,
+  fetchSandboxByName,
+  type InfraDiagnostics,
+  type TaskDiagnostics,
+} from "./diagnostics.js";
 import type {
   AgentProvider,
   CreateTaskInput,
@@ -13,6 +19,7 @@ import type {
 export interface TaskServiceOptions {
   orchestratorUrl: string;
   runtimeUrl: string;
+  firecrackerHostUrl?: string;
   preferredHost?: string;
   defaultAgent?: AgentProvider;
   eventBus?: EventBus;
@@ -26,6 +33,7 @@ export interface TaskServiceOptions {
 type SandboxRecord = {
   status?: {
     phase?: string;
+    message?: string;
     runtimeURL?: string;
     vmId?: string;
     host?: string;
@@ -38,6 +46,7 @@ export class TaskService {
   private readonly queue: TaskQueue<ScheduleJob>;
   private readonly orchestratorUrl: string;
   private readonly runtimeUrl: string;
+  private readonly firecrackerHostUrl?: string;
   private readonly preferredHost?: string;
   private readonly defaultAgent: AgentProvider;
   private readonly sandboxReadyTimeoutMs: number;
@@ -47,6 +56,10 @@ export class TaskService {
   constructor(options: TaskServiceOptions) {
     this.orchestratorUrl = options.orchestratorUrl.replace(/\/$/, "");
     this.runtimeUrl = options.runtimeUrl.replace(/\/$/, "");
+    this.firecrackerHostUrl =
+      options.firecrackerHostUrl?.trim() ||
+      process.env.FIRECRACKER_HOST_URL?.trim() ||
+      undefined;
     this.preferredHost = options.preferredHost?.trim() || undefined;
     this.defaultAgent = options.defaultAgent ?? resolveDefaultAgent();
     this.sandboxReadyTimeoutMs =
@@ -123,6 +136,30 @@ export class TaskService {
     );
   }
 
+  async getInfraDiagnostics(): Promise<InfraDiagnostics> {
+    return collectInfraDiagnostics({
+      orchestratorUrl: this.orchestratorUrl,
+      firecrackerHostUrl: this.firecrackerHostUrl,
+    });
+  }
+
+  async getTaskDiagnostics(
+    taskId: string,
+  ): Promise<TaskDiagnostics | undefined> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    const sandboxName = task.sandboxName ?? `sbx-${taskId.slice(0, 8)}`;
+    const sandbox = await fetchSandboxByName(this.orchestratorUrl, sandboxName);
+    return {
+      taskId,
+      sandboxName,
+      sandbox,
+    };
+  }
+
   startWorker(): void {
     if (this.workerStarted) {
       return;
@@ -158,6 +195,17 @@ export class TaskService {
       this.updateTask(task.id, "sandbox_starting", "Creating sandbox");
 
       const runtimeImage = runtimeForAgent(task.agent);
+      this.emit(
+        "sandbox.requested",
+        task.id,
+        "Requesting sandbox from orchestrator",
+        {
+          sandboxName,
+          runtime: runtimeImage,
+          orchestratorUrl: this.orchestratorUrl,
+        },
+      );
+
       await this.ensureSandbox(sandboxName, task.id, {
         taskId: task.id,
         runtime: runtimeImage,
@@ -177,6 +225,14 @@ export class TaskService {
       const runtimeBaseUrl =
         sandbox.status?.runtimeURL?.replace(/\/$/, "") || this.runtimeUrl;
       const runtime = new RuntimeClient({ baseUrl: runtimeBaseUrl });
+      this.emit(
+        "runtime.waiting",
+        task.id,
+        "Waiting for runtime supervisor health check",
+        {
+          runtimeURL: runtimeBaseUrl,
+        },
+      );
       await this.waitForRuntime(runtime, task.id);
       this.emit("runtime.ready", task.id, "Runtime supervisor is ready", {
         runtimeURL: runtimeBaseUrl,
@@ -511,7 +567,12 @@ export class TaskService {
     }
 
     if (status !== 202 && status !== 200 && status !== 409) {
-      throw new Error(`orchestrator rejected sandbox: ${status}`);
+      const message = `orchestrator rejected sandbox: HTTP ${status}`;
+      this.emit("sandbox.failed", taskId, message, {
+        sandboxName,
+        status,
+      });
+      throw new Error(message);
     }
   }
 
@@ -561,24 +622,67 @@ export class TaskService {
     const deadline = Date.now() + this.sandboxReadyTimeoutMs;
     let lastPhase = "unknown";
     let lastMessage = "";
+    let lastProgressAt = 0;
 
     while (Date.now() < deadline) {
       const sandbox = await this.fetchSandbox(sandboxName);
       if (sandbox) {
         const phase = sandbox.status?.phase ?? "Pending";
+        const message = sandbox.status?.message?.trim() ?? "";
+        const phaseChanged = phase !== lastPhase;
+        const messageChanged = message !== lastMessage;
         lastPhase = phase;
-        lastMessage = sandbox.status?.message?.trim() ?? "";
+        lastMessage = message;
+
+        if (
+          (phaseChanged || messageChanged) &&
+          Date.now() - lastProgressAt >= 1_000
+        ) {
+          lastProgressAt = Date.now();
+          this.emit(
+            "sandbox.provisioning",
+            taskId,
+            message
+              ? `Sandbox ${phase}: ${message}`
+              : `Sandbox phase is ${phase}`,
+            {
+              sandboxName,
+              phase,
+              message: message || undefined,
+              vmId: sandbox.status?.vmId,
+              host: sandbox.status?.host,
+              runtimeURL: sandbox.status?.runtimeURL,
+              elapsedMs: this.sandboxReadyTimeoutMs - (deadline - Date.now()),
+            },
+          );
+        }
 
         if (phase === "Running") {
           return sandbox;
         }
         if (phase === "Failed") {
-          throw new Error(
-            lastMessage
-              ? `sandbox ${sandboxName} failed: ${lastMessage}`
-              : `sandbox ${sandboxName} failed for task ${taskId}`,
-          );
+          const failureMessage = lastMessage
+            ? `sandbox ${sandboxName} failed: ${lastMessage}`
+            : `sandbox ${sandboxName} failed for task ${taskId}`;
+          this.emit("sandbox.failed", taskId, failureMessage, {
+            sandboxName,
+            phase,
+            message: lastMessage || undefined,
+          });
+          throw new Error(failureMessage);
         }
+      } else if (Date.now() - lastProgressAt >= 3_000) {
+        lastProgressAt = Date.now();
+        this.emit(
+          "sandbox.provisioning",
+          taskId,
+          "Sandbox not found in orchestrator yet — still waiting",
+          {
+            sandboxName,
+            phase: "unknown",
+            orchestratorUrl: this.orchestratorUrl,
+          },
+        );
       }
       await sleep(500);
     }
@@ -586,9 +690,14 @@ export class TaskService {
     const detail = lastMessage
       ? ` (phase=${lastPhase}, ${lastMessage})`
       : ` (phase=${lastPhase})`;
-    throw new Error(
-      `sandbox ${sandboxName} did not become ready for task ${taskId} within ${this.sandboxReadyTimeoutMs / 1000}s${detail}`,
-    );
+    const timeoutMessage = `sandbox ${sandboxName} did not become ready for task ${taskId} within ${this.sandboxReadyTimeoutMs / 1000}s${detail}`;
+    this.emit("sandbox.failed", taskId, timeoutMessage, {
+      sandboxName,
+      phase: lastPhase,
+      message: lastMessage || undefined,
+      timeoutSeconds: this.sandboxReadyTimeoutMs / 1000,
+    });
+    throw new Error(timeoutMessage);
   }
 
   private async waitForRuntime(
@@ -630,7 +739,11 @@ export class TaskService {
     type:
       | "task.created"
       | "task.scheduled"
+      | "sandbox.requested"
+      | "sandbox.provisioning"
       | "sandbox.started"
+      | "sandbox.failed"
+      | "runtime.waiting"
       | "runtime.ready"
       | "agent.running"
       | "git.clone"

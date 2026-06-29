@@ -822,11 +822,22 @@ docker logs -f scheduler
 
 ### Upgrades
 
-1. Build and push new images with a version tag.
-2. Roll execution hosts: `docker pull` + recreate `firecracker-host` and `scheduler` containers (snapshot-compatible changes only for host).
-3. Roll in-cluster: `kubectl -n devin-app rollout restart deploy/devin-server deploy/devin-web`
-4. Roll orchestrator: `kubectl -n devin-system rollout restart deploy/devin-orchestrator`
-5. Run DB migrations: `bun run migrate`
+1. Build and push new images with a version tag (CI **Registry** workflow on `main`).
+2. **Execution hosts** roll automatically via the **Deploy execution hosts** GitHub Actions workflow (SSM: `docker pull` + restart). Manual fallback:
+
+   ```sh
+   DEVIN_IMAGE_TAG=<git-sha> ./infra/scripts/deploy-execution-host-images.sh --discover
+   ```
+
+3. **Runtime snapshots** (when `apps/runtime/` or `runtime/*` change): run **Deploy execution hosts** manually with `rebuild_runtime_snapshots=true`, or on the host:
+
+   ```sh
+   ./infra/scripts/run-ssm-bootstrap-snapshots.sh <instance-id> ap-south-1
+   ```
+
+4. Roll in-cluster: `kubectl -n devin-app rollout restart deploy/devin-server deploy/devin-web`
+5. Roll orchestrator: `kubectl -n devin-system rollout restart deploy/devin-orchestrator`
+6. Run DB migrations: `bun run migrate`
 
 ### Scaling execution capacity
 

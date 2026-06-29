@@ -12,6 +12,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.3"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build scheduler image (dry-run)
+        run: |
+          docker build -f docker/scheduler/Dockerfile -t devin-scheduler:ci .
+
   go:
     runs-on: ubuntu-latest
     steps:
@@ -35,6 +53,10 @@ jobs:
       - name: Build firecracker-host
         working-directory: apps/firecracker-host
         run: go build ./cmd/host
+
+      - name: Build runtime supervisor
+        working-directory: apps/runtime
+        run: go build ./cmd/runtime
 
       - name: Test orchestrator packages
         working-directory: packages/orchestrator

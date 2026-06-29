@@ -43,4 +43,12 @@ export async function streamTaskEvents(id: string): Promise<Response> {
   return proxyScheduler(`/api/v1/tasks/${encodeURIComponent(id)}/events`);
 }
 
+export async function getInfraDiagnostics(): Promise<Response> {
+  return proxyScheduler("/api/v1/diagnostics");
+}
+
+export async function getTaskDiagnostics(id: string): Promise<Response> {
+  return proxyScheduler(`/api/v1/tasks/${encodeURIComponent(id)}/diagnostics`);
+}
+
 export { schedulerBaseUrl };

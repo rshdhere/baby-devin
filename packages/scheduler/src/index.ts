@@ -8,6 +8,17 @@ export type {
   TaskQueue,
 } from "@devin/queue";
 export { TaskService } from "./task-service.js";
+export {
+  collectInfraDiagnostics,
+  fetchFirecrackerHostStatus,
+  listSandboxes,
+} from "./diagnostics.js";
+export type {
+  InfraDiagnostics,
+  TaskDiagnostics,
+  SandboxSummary,
+  FirecrackerHostStatus,
+} from "./diagnostics.js";
 export type {
   CreateTaskInput,
   ScheduleJob,

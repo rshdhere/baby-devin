@@ -1,7 +1,11 @@
 export type TaskEventType =
   | "task.created"
   | "task.scheduled"
+  | "sandbox.requested"
+  | "sandbox.provisioning"
   | "sandbox.started"
+  | "sandbox.failed"
+  | "runtime.waiting"
   | "runtime.ready"
   | "agent.running"
   | "agent.started"
