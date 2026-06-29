@@ -12,6 +12,22 @@ import { requireAuth } from "../middleware/require-auth.js";
 
 export const githubRouter = Router();
 
+const defaultPermissions = {
+  canCommit: true,
+  canCreatePr: true,
+  canCreateRepo: true,
+  canCreateIssue: true,
+  canPush: true,
+} as const;
+
+function resolveBotStatus() {
+  const token = process.env.GITHUB_BOT_TOKEN?.trim();
+  return {
+    configured: Boolean(token),
+    username: process.env.GITHUB_BOT_NAME?.trim() || "baby-devin-bot",
+  };
+}
+
 githubRouter.use(requireAuth);
 
 githubRouter.get("/status", async (req, res) => {
@@ -21,25 +37,38 @@ githubRouter.get("/status", async (req, res) => {
     return;
   }
 
-  const status = await getGitHubConnectionStatus(userId);
+  try {
+    const status = await getGitHubConnectionStatus(userId);
 
-  const [settings] = await db
-    .select()
-    .from(userDashboardSettings)
-    .where(eq(userDashboardSettings.userId, userId))
-    .limit(1);
+    const [settings] = await db
+      .select()
+      .from(userDashboardSettings)
+      .where(eq(userDashboardSettings.userId, userId))
+      .limit(1);
 
-  res.status(200).json({
-    ...status,
-    permissions: {
-      canCommit: settings?.githubCanCommit ?? true,
-      canCreatePr: settings?.githubCanCreatePr ?? true,
-      canCreateRepo: settings?.githubCanCreateRepo ?? true,
-      canCreateIssue: settings?.githubCanCreateIssue ?? true,
-      canPush: settings?.githubCanPush ?? true,
-    },
-    selectedRepository: settings?.selectedRepository ?? null,
-  });
+    res.status(200).json({
+      ...status,
+      permissions: {
+        canCommit: settings?.githubCanCommit ?? defaultPermissions.canCommit,
+        canCreatePr:
+          settings?.githubCanCreatePr ?? defaultPermissions.canCreatePr,
+        canCreateRepo:
+          settings?.githubCanCreateRepo ?? defaultPermissions.canCreateRepo,
+        canCreateIssue:
+          settings?.githubCanCreateIssue ?? defaultPermissions.canCreateIssue,
+        canPush: settings?.githubCanPush ?? defaultPermissions.canPush,
+      },
+      selectedRepository: settings?.selectedRepository ?? null,
+      bot: resolveBotStatus(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to load GitHub connection",
+    });
+  }
 });
 
 githubRouter.get("/repos", async (req, res) => {

@@ -71,8 +71,14 @@ export async function getDashboardSettingsHandler(req: Request, res: Response) {
     return;
   }
 
-  const settings = await getOrCreateSettings(userId);
-  res.status(200).json(serializeSettings(settings));
+  try {
+    const settings = await getOrCreateSettings(userId);
+    res.status(200).json(serializeSettings(settings));
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Failed to load settings",
+    });
+  }
 }
 
 export async function updateDashboardSettingsHandler(

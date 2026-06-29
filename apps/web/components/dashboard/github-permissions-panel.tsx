@@ -15,7 +15,8 @@ import {
 import { authClient } from "@/lib/auth-client";
 import { getCallbackURL } from "@/lib/auth-config";
 import {
-  fetchGitHubStatus,
+  fetchGitHubStatusSafe,
+  GITHUB_REPO_SCOPES,
   updateGitHubPermissions,
   type GitHubPermissions,
   type GitHubStatus,
@@ -73,7 +74,7 @@ export function GitHubPermissionsPanel({
   useEffect(() => {
     let cancelled = false;
 
-    fetchGitHubStatus()
+    fetchGitHubStatusSafe()
       .then((next) => {
         if (!cancelled) {
           setStatus(next);
@@ -100,8 +101,9 @@ export function GitHubPermissionsPanel({
     setError(null);
 
     try {
-      await authClient.signIn.social({
+      await authClient.linkSocial({
         provider: "github",
+        scopes: [...GITHUB_REPO_SCOPES, "read:user", "user:email"],
         callbackURL: getCallbackURL("/dashboard"),
       });
     } catch {
@@ -171,11 +173,11 @@ export function GitHubPermissionsPanel({
           <Shield className="mt-0.5 size-5 shrink-0 text-[#4a90e2]" />
           <div className="min-w-0 flex-1">
             <h3 className="text-[14px] font-medium text-white">
-              Connect GitHub
+              Connect your GitHub
             </h3>
             <p className="mt-1 text-[13px] text-gray-500">
-              Link your GitHub account so Devin can work on your repositories,
-              commit changes, and open pull requests.
+              Link your personal GitHub account so Devin can work on your
+              repositories, commit changes, and open pull requests.
             </p>
             <MotionButton
               type="button"
@@ -188,6 +190,30 @@ export function GitHubPermissionsPanel({
             </MotionButton>
           </div>
         </div>
+
+        <div className="mt-4 rounded-lg border border-[#252525] bg-[#111] px-3 py-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[13px] text-gray-200">
+                Platform bot: @{status?.bot.username ?? "baby-devin-bot"}
+              </p>
+              <p className="text-[11px] text-gray-600">
+                Creates new repos and handles greenfield tasks on your behalf
+              </p>
+            </div>
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                status?.bot.configured
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "bg-amber-500/10 text-amber-400",
+              )}
+            >
+              {status?.bot.configured ? "Ready" : "Not configured"}
+            </span>
+          </div>
+        </div>
+
         {error ? (
           <p className="mt-3 text-[12px] text-red-400">{error}</p>
         ) : null}
@@ -287,6 +313,29 @@ export function GitHubPermissionsPanel({
           </a>
         </p>
       ) : null}
+
+      <div className="mt-4 rounded-lg border border-[#252525] bg-[#111] px-3 py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[13px] text-gray-200">
+              Platform bot: @{status.bot.username}
+            </p>
+            <p className="text-[11px] text-gray-600">
+              Used for new repo creation when no repository is selected
+            </p>
+          </div>
+          <span
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px] font-medium",
+              status.bot.configured
+                ? "bg-emerald-500/10 text-emerald-400"
+                : "bg-amber-500/10 text-amber-400",
+            )}
+          >
+            {status.bot.configured ? "Ready" : "Not configured"}
+          </span>
+        </div>
+      </div>
 
       {error ? <p className="mt-3 text-[12px] text-red-400">{error}</p> : null}
     </div>

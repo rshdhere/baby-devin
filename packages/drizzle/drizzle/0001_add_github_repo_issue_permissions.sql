@@ -1,0 +1,2 @@
+ALTER TABLE "user_dashboard_settings" ADD COLUMN "github_can_create_repo" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "user_dashboard_settings" ADD COLUMN "github_can_create_issue" boolean DEFAULT true NOT NULL;

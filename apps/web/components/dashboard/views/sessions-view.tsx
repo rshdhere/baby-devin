@@ -7,8 +7,8 @@ import { OnboardingPanel } from "@/components/dashboard/onboarding-panel";
 import { PromptComposer } from "@/components/dashboard/prompt-composer";
 import { SessionDetail } from "@/components/dashboard/session-detail";
 import { useSessions } from "@/components/dashboard/sessions-context";
-import { fetchDashboardSettings } from "@/lib/dashboard-settings-api";
-import { fetchGitHubStatus } from "@/lib/github-api";
+import { fetchDashboardSettingsSafe } from "@/lib/dashboard-settings-api";
+import { fetchGitHubStatusSafe } from "@/lib/github-api";
 import { cn } from "@/lib/utils";
 
 const collapseTransition = {
@@ -46,17 +46,16 @@ export function SessionsView() {
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([fetchDashboardSettings(), fetchGitHubStatus()])
-      .then(([settings, github]) => {
-        if (!cancelled) {
-          setSelectedRepository(settings.selectedRepository);
-          setGithubConnected(github.connected);
-          setHasRepoAccess(github.hasRepoAccess);
-        }
-      })
-      .catch(() => {
-        // settings load is best-effort for onboarding state
-      });
+    void Promise.all([
+      fetchDashboardSettingsSafe(),
+      fetchGitHubStatusSafe(),
+    ]).then(([settings, github]) => {
+      if (!cancelled) {
+        setSelectedRepository(settings.selectedRepository);
+        setGithubConnected(github.connected);
+        setHasRepoAccess(github.hasRepoAccess);
+      }
+    });
 
     return () => {
       cancelled = true;

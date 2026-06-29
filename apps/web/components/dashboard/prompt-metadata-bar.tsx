@@ -5,12 +5,12 @@ import { createPortal } from "react-dom";
 import { ChevronDown, GitBranch, Loader2, Sparkles } from "lucide-react";
 import {
   environmentOptions,
-  fetchDashboardSettings,
+  fetchDashboardSettingsSafe,
   updateDashboardSettings,
 } from "@/lib/dashboard-settings-api";
 import {
   fetchGitHubRepos,
-  fetchGitHubStatus,
+  fetchGitHubStatusSafe,
   selectGitHubRepository,
   type GitHubRepo,
 } from "@/lib/github-api";
@@ -108,21 +108,18 @@ export function PromptMetadataBar() {
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([fetchDashboardSettings(), fetchGitHubStatus()])
-      .then(([settings, github]) => {
-        if (!cancelled) {
-          setRepositoryLabel(settings.repositoryLabel);
-          setSelectedRepository(settings.selectedRepository);
-          setEnvironment(settings.environment);
-          setCustomEnvironment(settings.environment);
-          setGithubConnected(github.connected);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("Could not load saved settings");
-        }
-      });
+    void Promise.all([
+      fetchDashboardSettingsSafe(),
+      fetchGitHubStatusSafe(),
+    ]).then(([settings, github]) => {
+      if (!cancelled) {
+        setRepositoryLabel(settings.repositoryLabel);
+        setSelectedRepository(settings.selectedRepository);
+        setEnvironment(settings.environment);
+        setCustomEnvironment(settings.environment);
+        setGithubConnected(github.connected);
+      }
+    });
 
     return () => {
       cancelled = true;

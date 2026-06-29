@@ -15,7 +15,30 @@ export interface GitHubStatus {
   hasRepoAccess: boolean;
   permissions: GitHubPermissions;
   selectedRepository: string | null;
+  bot: {
+    configured: boolean;
+    username: string;
+  };
 }
+
+export const defaultGitHubStatus: GitHubStatus = {
+  connected: false,
+  username: null,
+  scopes: [],
+  hasRepoAccess: false,
+  permissions: {
+    canCommit: true,
+    canCreatePr: true,
+    canCreateRepo: true,
+    canCreateIssue: true,
+    canPush: true,
+  },
+  selectedRepository: null,
+  bot: {
+    configured: false,
+    username: "baby-devin-bot",
+  },
+};
 
 export interface GitHubRepo {
   id: number;
@@ -44,6 +67,14 @@ export async function fetchGitHubStatus(): Promise<GitHubStatus> {
     credentials: "include",
   });
   return parseResponse<GitHubStatus>(response);
+}
+
+export async function fetchGitHubStatusSafe(): Promise<GitHubStatus> {
+  try {
+    return await fetchGitHubStatus();
+  } catch {
+    return defaultGitHubStatus;
+  }
 }
 
 export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {

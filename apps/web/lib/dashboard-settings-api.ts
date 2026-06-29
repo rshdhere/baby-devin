@@ -15,6 +15,19 @@ export interface DashboardSettings {
   githubPermissions: GitHubPermissions;
 }
 
+export const defaultDashboardSettings: DashboardSettings = {
+  repositoryLabel: "No repository selected",
+  selectedRepository: null,
+  environment: "Ubuntu",
+  githubPermissions: {
+    canCommit: true,
+    canCreatePr: true,
+    canCreateRepo: true,
+    canCreateIssue: true,
+    canPush: true,
+  },
+};
+
 const settingsUrl = `${authConfig.baseURL}/api/v1/settings/dashboard`;
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -34,6 +47,14 @@ export async function fetchDashboardSettings() {
   });
 
   return parseResponse<DashboardSettings>(response);
+}
+
+export async function fetchDashboardSettingsSafe() {
+  try {
+    return await fetchDashboardSettings();
+  } catch {
+    return defaultDashboardSettings;
+  }
 }
 
 export async function updateDashboardSettings(

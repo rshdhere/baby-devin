@@ -68,11 +68,58 @@ if (shouldUseOAuthProxy()) {
   );
 }
 
+function resolveCrossSubDomainCookieDomain(): string | undefined {
+  const webAppUrl = process.env.WEB_APP_URL?.trim();
+  const authUrl = process.env.BETTER_AUTH_URL?.trim();
+
+  if (!webAppUrl || !authUrl) {
+    return undefined;
+  }
+
+  try {
+    const webHost = new URL(webAppUrl).hostname;
+    const authHost = new URL(authUrl).hostname;
+
+    if (webHost === authHost || webHost === "localhost") {
+      return undefined;
+    }
+
+    const webRoot = webHost.split(".").slice(-2).join(".");
+    const authRoot = authHost.split(".").slice(-2).join(".");
+
+    if (webRoot === authRoot) {
+      return `.${webRoot}`;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+const crossSubDomainCookieDomain = resolveCrossSubDomainCookieDomain();
+
 export const auth = betterAuth({
   basePath: "/api/v1/auth",
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: getAllowedOrigins(),
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["github", "google"],
+    },
+  },
+  ...(crossSubDomainCookieDomain
+    ? {
+        advanced: {
+          crossSubDomainCookies: {
+            enabled: true,
+            domain: crossSubDomainCookieDomain,
+          },
+        },
+      }
+    : {}),
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
