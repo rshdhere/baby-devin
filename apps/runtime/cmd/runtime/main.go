@@ -8,24 +8,25 @@ import (
 	"time"
 
 	"github.com/rshdhere/devin/apps/runtime/internal/supervisor"
+	"github.com/rshdhere/devin/apps/runtime/internal/workspace"
 )
 
 func main() {
 	port := envInt("RUNTIME_PORT", 8081)
-	workspace := envString("RUNTIME_WORKSPACE", "/tmp/devin-workspace")
+	workspacePath := envString("RUNTIME_WORKSPACE", workspace.DefaultPath())
 
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		slog.Error("failed to create workspace", "error", err)
+	if err := workspace.Prepare(workspacePath); err != nil {
+		slog.Error("failed to prepare workspace", "error", err)
 		os.Exit(1)
 	}
 
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(port),
-		Handler:           supervisor.New(workspace).Handler(),
+		Handler:           supervisor.New(workspacePath).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	slog.Info("runtime supervisor listening", "addr", srv.Addr, "workspace", workspace)
+	slog.Info("runtime supervisor listening", "addr", srv.Addr, "workspace", workspacePath)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("runtime supervisor failed", "error", err)
 		os.Exit(1)

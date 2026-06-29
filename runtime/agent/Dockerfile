@@ -20,7 +20,8 @@ RUN npm install -g @anthropic-ai/claude-code@latest \
 
 ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
 ENV AGENT_PROVIDER=mock
-ENV RUNTIME_PORT=8080
+ENV RUNTIME_PORT=8081
+ENV RUNTIME_WORKSPACE=/workspace
 
 WORKDIR /workspace
 COPY apps/runtime/bin/runtime /usr/local/bin/devin-runtime-supervisor

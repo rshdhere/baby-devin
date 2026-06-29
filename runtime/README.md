@@ -78,3 +78,9 @@ spec:
 ```
 
 The orchestrator selects a `FirecrackerHost`, and `firecracker-host` restores the matching snapshot. The runtime supervisor listens on port **8081** inside the microVM.
+
+## Task workspace
+
+Agent and git operations use **`/workspace`**, backed by a **tmpfs** mount created at supervisor startup. Firecracker restores the root drive read-only, so the writable tmpfs layer must be present in the golden snapshot memory image.
+
+After changing `apps/runtime/` or `runtime/*`, rebuild rootfs and snapshots on each execution host (see `deployment.md` § snapshot rebuild).

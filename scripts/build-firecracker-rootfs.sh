@@ -22,10 +22,8 @@ if ! command -v docker >/dev/null; then
   exit 1
 fi
 
-if [[ ! -f "${ROOT}/apps/runtime/bin/runtime" ]]; then
-  echo "building runtime supervisor binary..."
-  (cd "${ROOT}/apps/runtime" && go build -o bin/runtime ./cmd/runtime)
-fi
+echo "building runtime supervisor binary..."
+(cd "${ROOT}/apps/runtime" && go build -o bin/runtime ./cmd/runtime)
 
 echo "building docker image ${IMAGE}..."
 docker build -f "${ROOT}/runtime/${RUNTIME}/Dockerfile" -t "${IMAGE}" "${ROOT}"

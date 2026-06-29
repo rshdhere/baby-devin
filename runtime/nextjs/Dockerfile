@@ -15,6 +15,8 @@ RUN curl -fsSL https://bun.sh/install | bash \
 
 ENV PATH="/root/.bun/bin:${PATH}"
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV RUNTIME_PORT=8081
+ENV RUNTIME_WORKSPACE=/workspace
 
 WORKDIR /workspace
 COPY apps/runtime/bin/runtime /usr/local/bin/devin-runtime-supervisor
