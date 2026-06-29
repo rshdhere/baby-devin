@@ -14,7 +14,7 @@ resource "aws_lb" "scheduler" {
 resource "aws_lb_target_group" "scheduler" {
   count = local.scheduler_nlb_enabled ? 1 : 0
 
-  name        = "${var.name_prefix}-scheduler"
+  name        = "${var.name_prefix}-sched-tg"
   port        = var.scheduler_port
   protocol    = "TCP"
   vpc_id      = var.vpc_id
@@ -63,4 +63,16 @@ resource "time_sleep" "wait_for_scheduler_nlb" {
   create_duration = "60s"
 
   depends_on = [aws_lb_listener.scheduler]
+}
+
+# Always present so downstream resources can depend on scheduler NLB readiness
+# without referencing counted resources directly.
+resource "null_resource" "scheduler_connectivity_ready" {
+  triggers = {
+    scheduler_url = local.effective_scheduler_url
+    nlb_enabled   = tostring(local.scheduler_nlb_enabled)
+    nlb_dns       = coalesce(local.scheduler_nlb_dns, "direct")
+  }
+
+  depends_on = [time_sleep.wait_for_scheduler_nlb]
 }

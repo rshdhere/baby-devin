@@ -81,7 +81,7 @@ output "execution_hosts" {
 
 output "scheduler_url" {
   description = "Primary scheduler URL — set on devin-server as SCHEDULER_URL."
-  value       = try(module.platform_connectivity[0].scheduler_url, try(values(local.execution_hosts)[0].scheduler, null))
+  value       = try(module.platform_connectivity[0].scheduler_url, local.primary_scheduler_url)
 }
 
 output "orchestrator_url" {

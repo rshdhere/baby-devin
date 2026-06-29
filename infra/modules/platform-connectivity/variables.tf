@@ -3,17 +3,6 @@ variable "name_prefix" {
   type        = string
 }
 
-variable "scheduler_url" {
-  description = "Fallback scheduler URL when NLB is disabled (http://<host-ip>:9091)."
-  type        = string
-}
-
-variable "scheduler_url_override" {
-  description = "Optional fixed scheduler URL for devin-server. When null, use the internal NLB hostname when available."
-  type        = string
-  default     = null
-}
-
 variable "manage_scheduler_nlb" {
   description = "Create an internal NLB targeting execution host scheduler ports."
   type        = bool
@@ -29,6 +18,7 @@ variable "scheduler_port" {
 variable "vpc_id" {
   description = "VPC ID for the scheduler internal NLB target group."
   type        = string
+  nullable    = true
   default     = null
 }
 
@@ -36,6 +26,25 @@ variable "private_subnet_ids" {
   description = "Private subnet IDs for the scheduler internal NLB."
   type        = list(string)
   default     = []
+}
+
+variable "scheduler_url" {
+  description = "Fallback scheduler URL when NLB is disabled (http://<host-ip>:9091)."
+  type        = string
+  nullable    = true
+  default     = null
+
+  validation {
+    condition     = var.scheduler_url != null || var.manage_scheduler_nlb
+    error_message = "scheduler_url is required when manage_scheduler_nlb is false."
+  }
+}
+
+variable "scheduler_url_override" {
+  description = "Optional fixed scheduler URL for devin-server. When null, use the internal NLB hostname when available."
+  type        = string
+  nullable    = true
+  default     = null
 }
 
 variable "task_queue_url" {
@@ -85,6 +94,7 @@ variable "orchestrator_port" {
 variable "orchestrator_url_override" {
   description = "Optional fixed orchestrator URL for execution hosts. When null, use the internal NLB hostname when available."
   type        = string
+  nullable    = true
   default     = null
 }
 
@@ -109,6 +119,7 @@ variable "manage_ssm_parameters" {
 variable "firecracker_hosts_gitops_path" {
   description = "Optional path to write generated FirecrackerHost GitOps YAML."
   type        = string
+  nullable    = true
   default     = null
 }
 

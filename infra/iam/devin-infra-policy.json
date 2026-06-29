@@ -113,31 +113,9 @@
       "Resource": "*"
     },
     {
-      "Sid": "ElasticLoadBalancingSchedulerNLB",
+      "Sid": "ELB",
       "Effect": "Allow",
-      "Action": [
-        "elasticloadbalancing:CreateLoadBalancer",
-        "elasticloadbalancing:DeleteLoadBalancer",
-        "elasticloadbalancing:DescribeLoadBalancers",
-        "elasticloadbalancing:DescribeLoadBalancerAttributes",
-        "elasticloadbalancing:ModifyLoadBalancerAttributes",
-        "elasticloadbalancing:CreateTargetGroup",
-        "elasticloadbalancing:DeleteTargetGroup",
-        "elasticloadbalancing:DescribeTargetGroups",
-        "elasticloadbalancing:DescribeTargetGroupAttributes",
-        "elasticloadbalancing:ModifyTargetGroup",
-        "elasticloadbalancing:ModifyTargetGroupAttributes",
-        "elasticloadbalancing:RegisterTargets",
-        "elasticloadbalancing:DeregisterTargets",
-        "elasticloadbalancing:DescribeTargetHealth",
-        "elasticloadbalancing:CreateListener",
-        "elasticloadbalancing:DeleteListener",
-        "elasticloadbalancing:DescribeListeners",
-        "elasticloadbalancing:ModifyListener",
-        "elasticloadbalancing:AddTags",
-        "elasticloadbalancing:RemoveTags",
-        "elasticloadbalancing:DescribeTags"
-      ],
+      "Action": "elasticloadbalancing:*",
       "Resource": "*"
     },
     {
@@ -168,7 +146,6 @@
         "iam:PutRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:ListInstanceProfilesForRole",
-        "iam:RemoveRoleFromInstanceProfile",
         "iam:CreateInstanceProfile",
         "iam:DeleteInstanceProfile",
         "iam:AddRoleToInstanceProfile",
@@ -252,15 +229,6 @@
         "ssm:StartSession",
         "ssm:TerminateSession",
         "ssm:ResumeSession"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "EC2DescribeForSSM",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:DescribeInstances",
-        "ec2:DescribeInstanceStatus"
       ],
       "Resource": "*"
     },

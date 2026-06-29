@@ -1,20 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source = "hashicorp/aws"
-    }
-    kubernetes = {
-      source = "hashicorp/kubernetes"
-    }
-    time = {
-      source = "hashicorp/time"
-    }
-    null = {
-      source = "hashicorp/null"
-    }
-  }
-}
-
 locals {
   ssm_prefix = "/${var.name_prefix}/platform"
 
@@ -104,7 +87,7 @@ resource "aws_ssm_parameter" "scheduler_url" {
     Name = "${var.name_prefix}-scheduler-url"
   })
 
-  depends_on = [time_sleep.wait_for_scheduler_nlb]
+  depends_on = [null_resource.scheduler_connectivity_ready]
 }
 
 resource "aws_ssm_parameter" "orchestrator_url" {
@@ -150,7 +133,7 @@ resource "null_resource" "sync_scheduler_url" {
     }
   }
 
-  depends_on = [time_sleep.wait_for_scheduler_nlb]
+  depends_on = [null_resource.scheduler_connectivity_ready]
 }
 
 resource "local_file" "firecracker_hosts_gitops" {

@@ -73,11 +73,8 @@ module "execution_hosts" {
 
 locals {
   execution_hosts = try(module.execution_hosts[0].hosts, {})
-  primary_scheduler_url = try(
-    values(local.execution_hosts)[0].scheduler,
-    null,
-  )
-  task_queue_url = try(module.task_queue[0].queue_url, "")
+  primary_scheduler_url = length(local.execution_hosts) > 0 ? values(local.execution_hosts)[0].scheduler : null
+  task_queue_url        = try(module.task_queue[0].queue_url, "")
 }
 
 module "platform_connectivity" {
@@ -113,7 +110,7 @@ resource "null_resource" "sync_execution_host_config" {
     instance_id      = module.execution_hosts[0].hosts[each.key].instance_id
     orchestrator_url = try(module.platform_connectivity[0].orchestrator_url, "")
     task_queue_url   = local.task_queue_url
-    scheduler_url    = try(module.execution_hosts[0].hosts[each.key].scheduler, "")
+    scheduler_url    = try(module.platform_connectivity[0].scheduler_url, local.primary_scheduler_url)
     nested_virt      = tostring(var.execution_host_enable_nested_virtualization)
   }
 

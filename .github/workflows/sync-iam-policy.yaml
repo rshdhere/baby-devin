@@ -35,6 +35,17 @@ jobs:
           role-to-assume: ${{ vars.AWS_IAM_SYNC_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Validate policy size
+        run: |
+          set -euo pipefail
+          MAX_CHARS=6144
+          SIZE="$(python3 -c "import json; print(len(json.dumps(json.load(open('devin-infra-policy.json')), separators=(',', ':'))))")"
+          echo "Policy minified size: ${SIZE} / ${MAX_CHARS} characters"
+          if [ "${SIZE}" -gt "${MAX_CHARS}" ]; then
+            echo "::error::Policy exceeds AWS IAM quota (${SIZE} > ${MAX_CHARS}). Shrink devin-infra-policy.json before syncing."
+            exit 1
+          fi
+
       - name: Publish IAM policy version
         env:
           POLICY_NAME: devin-infra-terraform
