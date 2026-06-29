@@ -145,7 +145,7 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask Devin to build features, fix bugs, or iterate on your code"
+          placeholder="Ask Devin to build features, fix bugs, or ship changes"
           rows={1}
           disabled={isSubmitting}
           initial={false}
