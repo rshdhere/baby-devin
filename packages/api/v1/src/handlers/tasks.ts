@@ -72,20 +72,30 @@ tasksRouter.post("/", async (req, res) => {
 
     const repository =
       parsed.data.repository ?? settings?.selectedRepository ?? undefined;
-    const githubToken = repository
+    const createRepository = parsed.data.createRepository;
+    const botToken = process.env.GITHUB_BOT_TOKEN?.trim();
+    const userToken = repository
       ? await getGitHubAccessToken(userId)
       : undefined;
+    const githubToken =
+      createRepository && botToken ? botToken : (userToken ?? undefined);
 
     const response = await createTask({
       prompt: parsed.data.prompt,
       agent: parsed.data.agent,
       userId,
       repository,
+      createRepository,
+      testCommand: parsed.data.testCommand,
+      issueTitle: parsed.data.issueTitle,
+      issueBody: parsed.data.issueBody,
       githubToken: githubToken ?? undefined,
       permissions: settings
         ? {
             canCommit: settings.githubCanCommit,
             canCreatePr: settings.githubCanCreatePr,
+            canCreateRepo: settings.githubCanCreateRepo,
+            canCreateIssue: settings.githubCanCreateIssue,
             canPush: settings.githubCanPush,
           }
         : undefined,

@@ -61,6 +61,7 @@ type runRequest struct {
 	TaskID string `json:"taskId"`
 	Prompt string `json:"prompt"`
 	Agent  string `json:"agent,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +81,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		TaskID: req.TaskID,
 		Prompt: req.Prompt,
 		Agent:  req.Agent,
+		Env:    req.Env,
 	}, s.eventBus)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

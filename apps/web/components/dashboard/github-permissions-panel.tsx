@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import {
   Check,
+  CircleDot,
   ExternalLink,
   GitBranch,
   GitCommit,
   GitPullRequest,
   Loader2,
+  PlusCircle,
   Shield,
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
@@ -43,6 +45,19 @@ const permissionItems = [
     label: "Open pull requests",
     description: "Create PRs after Devin finishes work",
     icon: GitPullRequest,
+  },
+  {
+    key: "canCreateRepo" as const,
+    label: "Create repositories",
+    description:
+      "Let baby-devin-bot create new GitHub repos for greenfield tasks",
+    icon: PlusCircle,
+  },
+  {
+    key: "canCreateIssue" as const,
+    label: "Create issues",
+    description: "Open GitHub issues for follow-ups and task tracking",
+    icon: CircleDot,
   },
 ];
 

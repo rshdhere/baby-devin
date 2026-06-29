@@ -50,6 +50,8 @@ export const dashboardSettingsSchema = {
       .optional(),
     githubCanCommit: z.boolean().optional(),
     githubCanCreatePr: z.boolean().optional(),
+    githubCanCreateRepo: z.boolean().optional(),
+    githubCanCreateIssue: z.boolean().optional(),
     githubCanPush: z.boolean().optional(),
   }),
 };
@@ -58,6 +60,8 @@ export const githubPermissionsSchema = {
   update: z.object({
     canCommit: z.boolean(),
     canCreatePr: z.boolean(),
+    canCreateRepo: z.boolean(),
+    canCreateIssue: z.boolean(),
     canPush: z.boolean(),
   }),
 };
@@ -69,6 +73,13 @@ export const createTaskSchema = z.object({
     .string()
     .regex(/^[\w.-]+\/[\w.-]+$/)
     .optional(),
+  createRepository: z
+    .string()
+    .regex(/^[\w.-]+$/)
+    .optional(),
+  testCommand: z.string().min(1).max(500).optional(),
+  issueTitle: z.string().min(1).max(200).optional(),
+  issueBody: z.string().max(8000).optional(),
 });
 
 export type DashboardSettingsUpdate = z.infer<

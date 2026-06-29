@@ -20,6 +20,10 @@ interface SessionsContextValue {
     prompt: string;
     agent?: Task["agent"];
     repository?: string;
+    createRepository?: string;
+    testCommand?: string;
+    issueTitle?: string;
+    issueBody?: string;
   }) => Promise<Task>;
   selectTask: (taskId: string | null) => void;
   activeTask: Task | null;
@@ -66,6 +70,10 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       prompt: string;
       agent?: Task["agent"];
       repository?: string;
+      createRepository?: string;
+      testCommand?: string;
+      issueTitle?: string;
+      issueBody?: string;
     }) => {
       const task = await createTask(input);
       setTasks((current) => [task, ...current]);

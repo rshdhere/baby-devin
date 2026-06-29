@@ -17,6 +17,8 @@ export type TaskEventType =
   | "git.commit"
   | "git.push"
   | "git.pr"
+  | "git.repo"
+  | "git.issue"
   | "tests.running"
   | "task.completed"
   | "task.failed";

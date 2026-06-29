@@ -84,6 +84,12 @@ export const userDashboardSettings = pgTable("user_dashboard_settings", {
   environment: text("environment").default("Ubuntu").notNull(),
   githubCanCommit: boolean("github_can_commit").default(true).notNull(),
   githubCanCreatePr: boolean("github_can_create_pr").default(true).notNull(),
+  githubCanCreateRepo: boolean("github_can_create_repo")
+    .default(true)
+    .notNull(),
+  githubCanCreateIssue: boolean("github_can_create_issue")
+    .default(true)
+    .notNull(),
   githubCanPush: boolean("github_can_push").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")

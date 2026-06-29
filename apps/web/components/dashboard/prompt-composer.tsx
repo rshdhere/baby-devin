@@ -19,6 +19,15 @@ import { PromptMetadataBar } from "@/components/dashboard/prompt-metadata-bar";
 import { useSessions } from "@/components/dashboard/sessions-context";
 import { cn } from "@/lib/utils";
 
+function slugifyRepositoryName(prompt: string): string {
+  const slug = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return slug || "devin-project";
+}
+
 const MIN_TEXTAREA_HEIGHT = 72;
 
 const textareaSpring = {
@@ -45,7 +54,7 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
   const [prompt, setPrompt] = useState("");
   const [textareaHeight, setTextareaHeight] = useState(MIN_TEXTAREA_HEIGHT);
   const [agent, setAgent] =
-    useState<(typeof agentOptions)[number]["id"]>("mock");
+    useState<(typeof agentOptions)[number]["id"]>("cursor");
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +82,9 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
         prompt: trimmed,
         agent,
         repository: selectedRepository ?? undefined,
+        createRepository: selectedRepository
+          ? undefined
+          : slugifyRepositoryName(trimmed),
       });
       setPrompt("");
     } catch (submitError) {

@@ -13,6 +13,8 @@ const defaultSettings = {
   selectedRepository: null as string | null,
   githubCanCommit: true,
   githubCanCreatePr: true,
+  githubCanCreateRepo: true,
+  githubCanCreateIssue: true,
   githubCanPush: true,
 } as const;
 
@@ -35,6 +37,8 @@ async function getOrCreateSettings(userId: string) {
       environment: defaultSettings.environment,
       githubCanCommit: defaultSettings.githubCanCommit,
       githubCanCreatePr: defaultSettings.githubCanCreatePr,
+      githubCanCreateRepo: defaultSettings.githubCanCreateRepo,
+      githubCanCreateIssue: defaultSettings.githubCanCreateIssue,
       githubCanPush: defaultSettings.githubCanPush,
     })
     .returning();
@@ -52,6 +56,8 @@ function serializeSettings(
     githubPermissions: {
       canCommit: settings.githubCanCommit,
       canCreatePr: settings.githubCanCreatePr,
+      canCreateRepo: settings.githubCanCreateRepo,
+      canCreateIssue: settings.githubCanCreateIssue,
       canPush: settings.githubCanPush,
     },
   };
@@ -111,6 +117,12 @@ export async function updateDashboardSettingsHandler(
   }
   if (parsed.data.githubCanCreatePr !== undefined) {
     updateData.githubCanCreatePr = parsed.data.githubCanCreatePr;
+  }
+  if (parsed.data.githubCanCreateRepo !== undefined) {
+    updateData.githubCanCreateRepo = parsed.data.githubCanCreateRepo;
+  }
+  if (parsed.data.githubCanCreateIssue !== undefined) {
+    updateData.githubCanCreateIssue = parsed.data.githubCanCreateIssue;
   }
   if (parsed.data.githubCanPush !== undefined) {
     updateData.githubCanPush = parsed.data.githubCanPush;

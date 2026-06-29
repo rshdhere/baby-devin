@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/rshdhere/devin/apps/runtime/internal/executil"
 )
@@ -21,7 +20,7 @@ func (r *ClaudeRunner) Run(
 	req RunRequest,
 	publish func(eventType, message string, data map[string]any),
 ) (*RunResult, error) {
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+	if envValue(req, "ANTHROPIC_API_KEY") == "" {
 		return &RunResult{
 			Status:  "failed",
 			Message: "ANTHROPIC_API_KEY is not set",
@@ -42,7 +41,7 @@ func (r *ClaudeRunner) Run(
 	command := shellQuote(r.cfg.ClaudeBin) + " " + joinShellArgs(args)
 	publish("agent.log", "running claude code", map[string]any{"command": command})
 
-	result, err := executil.Run(ctx, r.cfg.Workspace, command, nil)
+	result, err := executil.Run(ctx, r.cfg.Workspace, command, mergeEnv(req))
 	if err != nil {
 		return nil, err
 	}

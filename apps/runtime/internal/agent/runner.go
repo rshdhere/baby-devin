@@ -11,6 +11,7 @@ type RunRequest struct {
 	TaskID string
 	Prompt string
 	Agent  string
+	Env    map[string]string
 }
 
 type RunResult struct {

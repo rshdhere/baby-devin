@@ -3,6 +3,8 @@ import { authConfig } from "@/lib/auth-config";
 export interface GitHubPermissions {
   canCommit: boolean;
   canCreatePr: boolean;
+  canCreateRepo: boolean;
+  canCreateIssue: boolean;
   canPush: boolean;
 }
 

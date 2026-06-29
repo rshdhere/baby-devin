@@ -44,6 +44,9 @@ export type TaskEventType =
   | "git.commit"
   | "git.push"
   | "git.pr"
+  | "git.repo"
+  | "git.issue"
+  | "tests.running"
   | "task.completed"
   | "task.failed";
 
@@ -130,6 +133,10 @@ export async function createTask(input: {
   prompt: string;
   agent?: AgentProvider;
   repository?: string;
+  createRepository?: string;
+  testCommand?: string;
+  issueTitle?: string;
+  issueBody?: string;
 }): Promise<Task> {
   const response = await fetch(tasksUrl, {
     method: "POST",

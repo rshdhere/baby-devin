@@ -9,6 +9,13 @@ import {
   type InfraDiagnostics,
   type TaskDiagnostics,
 } from "./diagnostics.js";
+import {
+  authenticatedCloneUrl,
+  createGitHubIssue,
+  createGitHubPullRequest,
+  createGitHubRepository,
+  fetchDefaultBranch,
+} from "./github.js";
 import type {
   AgentProvider,
   CreateTaskInput,
@@ -112,9 +119,13 @@ export class TaskService {
         agent: task.agent,
         userId: input.userId,
         repository: input.repository,
+        createRepository: input.createRepository,
         cloneUrl: input.cloneUrl,
         githubToken: input.githubToken,
         permissions: input.permissions,
+        testCommand: input.testCommand,
+        issueTitle: input.issueTitle,
+        issueBody: input.issueBody,
         enqueuedAt: now,
       })
       .catch((error) => {
@@ -252,17 +263,63 @@ export class TaskService {
 
       const repoCwd = "repo";
       let agentPrompt = task.prompt;
+      let repository = job.repository;
+      let cloneUrl = job.cloneUrl;
+      let githubToken = job.githubToken;
 
-      if (job.cloneUrl && job.repository) {
-        this.emit("git.clone", task.id, `Cloning ${job.repository}`, {
-          repository: job.repository,
+      if (!repository && job.createRepository) {
+        const botToken = resolveBotToken();
+        if (!botToken) {
+          throw new Error(
+            "GITHUB_BOT_TOKEN is not configured for repository creation",
+          );
+        }
+        if (!job.permissions?.canCreateRepo) {
+          throw new Error("repository creation is not permitted");
+        }
+
+        const created = await createGitHubRepository(
+          botToken,
+          job.createRepository,
+          { description: task.title },
+        );
+        repository = created.fullName;
+        task.repository = repository;
+        cloneUrl = authenticatedCloneUrl(botToken, repository);
+        githubToken = botToken;
+        job.repository = repository;
+        job.cloneUrl = cloneUrl;
+        job.githubToken = botToken;
+
+        this.emit("git.repo", task.id, `Created repository ${repository}`, {
+          repository,
+          htmlUrl: created.htmlUrl,
+        });
+      }
+
+      if (cloneUrl && repository) {
+        this.emit("git.clone", task.id, `Cloning ${repository}`, {
+          repository,
         });
         await runtime.gitClone({
           taskId: task.id,
-          url: job.cloneUrl,
+          url: cloneUrl,
           path: repoCwd,
         });
-        agentPrompt = `Repository ${job.repository} is cloned at /workspace/${repoCwd}. Work in that directory.\n\n${task.prompt}`;
+        await this.configureSandboxGit(
+          runtime,
+          task.id,
+          githubToken,
+          githubToken === resolveBotToken(),
+        );
+        agentPrompt = buildAgentPrompt(task.prompt, repository, repoCwd);
+      } else if (githubToken) {
+        await this.configureSandboxGit(
+          runtime,
+          task.id,
+          githubToken,
+          githubToken === resolveBotToken(),
+        );
       }
 
       const stopEvents = this.forwardRuntimeEvents(runtimeBaseUrl, task.id);
@@ -271,13 +328,14 @@ export class TaskService {
       this.emit("agent.running", task.id, `${task.agent} agent started`, {
         prompt: task.prompt,
         agent: task.agent,
-        repository: job.repository,
+        repository,
       });
 
       const runResult = await runtime.run({
         taskId: task.id,
         prompt: agentPrompt,
         agent: task.agent,
+        env: this.runtimeSecrets(githubToken),
       });
 
       stopEvents();
@@ -286,8 +344,23 @@ export class TaskService {
         throw new Error(runResult.message);
       }
 
-      if (job.repository && job.permissions) {
-        await this.finalizeGitWork(runtime, task, job, repoCwd);
+      if (repository && cloneUrl) {
+        if (job.testCommand) {
+          await this.runTests(runtime, task, job.testCommand, repoCwd);
+        }
+
+        if (job.permissions) {
+          await this.finalizeGitWork(runtime, task, job, repoCwd);
+        }
+
+        if (
+          job.issueTitle &&
+          job.permissions?.canCreateIssue &&
+          githubToken &&
+          repository
+        ) {
+          await this.createTaskIssue(task, repository, githubToken, job);
+        }
       }
 
       this.updateTask(
@@ -456,22 +529,17 @@ export class TaskService {
     }
 
     try {
-      const defaultBranch = await this.fetchDefaultBranch(
+      const defaultBranch = await fetchDefaultBranch(
         job.githubToken,
         owner,
         repo,
       );
-      const pr = await this.createGitHubPullRequest(
-        job.githubToken,
-        owner,
-        repo,
-        {
-          title: task.title ?? `Devin: ${task.prompt.slice(0, 60)}`,
-          body: `Automated changes by Devin.\n\n**Prompt:** ${task.prompt}`,
-          head: branchName,
-          base: defaultBranch,
-        },
-      );
+      const pr = await createGitHubPullRequest(job.githubToken, owner, repo, {
+        title: task.title ?? `Devin: ${task.prompt.slice(0, 60)}`,
+        body: `Automated changes by Devin.\n\n**Prompt:** ${task.prompt}`,
+        head: branchName,
+        base: defaultBranch,
+      });
       task.prUrl = pr.html_url;
       this.emit("git.pr", task.id, `Opened pull request #${pr.number}`, {
         prUrl: pr.html_url,
@@ -486,52 +554,92 @@ export class TaskService {
     }
   }
 
-  private async fetchDefaultBranch(
-    token: string,
-    owner: string,
-    repo: string,
-  ): Promise<string> {
-    const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-      },
-    );
-    if (!response.ok) {
-      return "main";
+  private async configureSandboxGit(
+    runtime: RuntimeClient,
+    taskId: string,
+    token?: string,
+    useBot = false,
+  ): Promise<void> {
+    if (!token) {
+      return;
     }
-    const data = (await response.json()) as { default_branch?: string };
-    return data.default_branch ?? "main";
+
+    const author = resolveGitAuthor(useBot);
+    await runtime.terminal({
+      taskId,
+      command: `git config --global user.name '${escapeShell(author.name)}' && git config --global user.email '${escapeShell(author.email)}'`,
+    });
   }
 
-  private async createGitHubPullRequest(
-    token: string,
-    owner: string,
-    repo: string,
-    opts: { title: string; body: string; head: string; base: string },
-  ): Promise<{ html_url: string; number: number }> {
-    const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/pulls`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-        body: JSON.stringify(opts),
-      },
-    );
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`GitHub PR error ${response.status}: ${body}`);
+  private async runTests(
+    runtime: RuntimeClient,
+    task: Task,
+    testCommand: string,
+    repoCwd: string,
+  ): Promise<void> {
+    this.emit("tests.running", task.id, `Running tests: ${testCommand}`, {
+      command: testCommand,
+    });
+
+    const result = await runtime.terminal({
+      taskId: task.id,
+      command: testCommand,
+      cwd: repoCwd,
+    });
+
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `tests failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
+      );
     }
-    return response.json() as Promise<{ html_url: string; number: number }>;
+
+    this.emit("tests.running", task.id, "Tests passed", {
+      command: testCommand,
+      exitCode: result.exitCode,
+    });
+  }
+
+  private async createTaskIssue(
+    task: Task,
+    repository: string,
+    token: string,
+    job: ScheduleJob,
+  ): Promise<void> {
+    const [owner, repo] = repository.split("/");
+    if (!owner || !repo || !job.issueTitle) {
+      return;
+    }
+
+    try {
+      const issue = await createGitHubIssue(token, owner, repo, {
+        title: job.issueTitle,
+        body:
+          job.issueBody ??
+          `Created by Devin for task ${task.id}.\n\n**Prompt:** ${task.prompt}`,
+      });
+      this.emit("git.issue", task.id, `Opened issue #${issue.number}`, {
+        issueUrl: issue.htmlUrl,
+        number: issue.number,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to create issue";
+      this.emit("git.issue", task.id, message, { error: message });
+    }
+  }
+
+  private runtimeSecrets(githubToken?: string): Record<string, string> {
+    const secrets: Record<string, string> = {};
+    for (const key of ["CURSOR_API_KEY", "ANTHROPIC_API_KEY"] as const) {
+      const value = process.env[key]?.trim();
+      if (value) {
+        secrets[key] = value;
+      }
+    }
+    if (githubToken) {
+      secrets.GITHUB_TOKEN = githubToken;
+    }
+    return secrets;
   }
 
   private async ensureSandbox(
@@ -762,6 +870,9 @@ export class TaskService {
       | "git.commit"
       | "git.push"
       | "git.pr"
+      | "git.repo"
+      | "git.issue"
+      | "tests.running"
       | "task.completed"
       | "task.failed",
     taskId: string,
@@ -803,11 +914,57 @@ function runtimeForAgent(agent: AgentProvider): string {
 }
 
 function resolveDefaultAgent(): AgentProvider {
+  if (process.env.CURSOR_API_KEY?.trim()) {
+    return "cursor";
+  }
+  if (process.env.ANTHROPIC_API_KEY?.trim()) {
+    return "claude";
+  }
   const raw = (process.env.DEFAULT_AGENT ?? "mock").trim();
   if (raw === "cursor" || raw === "claude" || raw === "mock") {
     return raw;
   }
   return "mock";
+}
+
+function resolveBotToken(): string | undefined {
+  return process.env.GITHUB_BOT_TOKEN?.trim() || undefined;
+}
+
+function resolveGitAuthor(useBot: boolean): { name: string; email: string } {
+  if (useBot) {
+    return {
+      name: process.env.GITHUB_BOT_NAME?.trim() || "baby-devin-bot",
+      email:
+        process.env.GITHUB_BOT_EMAIL?.trim() ||
+        "baby-devin-bot@users.noreply.github.com",
+    };
+  }
+  return {
+    name: process.env.GIT_AUTHOR_NAME?.trim() || "devin-agent",
+    email: process.env.GIT_AUTHOR_EMAIL?.trim() || "agent@devin.baby",
+  };
+}
+
+function buildAgentPrompt(
+  prompt: string,
+  repository: string,
+  repoCwd: string,
+): string {
+  return [
+    `Repository ${repository} is cloned at /workspace/${repoCwd}. Work in that directory.`,
+    "",
+    "Sandbox tooling:",
+    "- GITHUB_TOKEN is available for gh and git",
+    "- Run tests before finishing when applicable",
+    "- You may commit, push, open pull requests, and create issues with gh",
+    "",
+    prompt,
+  ].join("\n");
+}
+
+function escapeShell(value: string): string {
+  return value.replace(/'/g, `'\"'\"'`);
 }
 
 function resolveTimeoutMs(envKey: string, defaultSeconds: number): number {

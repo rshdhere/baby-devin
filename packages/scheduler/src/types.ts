@@ -13,6 +13,8 @@ export type TaskStatus =
 export interface GitHubPermissions {
   canCommit: boolean;
   canCreatePr: boolean;
+  canCreateRepo: boolean;
+  canCreateIssue: boolean;
   canPush: boolean;
 }
 
@@ -37,9 +39,13 @@ export interface CreateTaskInput {
   agent?: AgentProvider;
   userId?: string;
   repository?: string;
+  createRepository?: string;
   cloneUrl?: string;
   githubToken?: string;
   permissions?: GitHubPermissions;
+  testCommand?: string;
+  issueTitle?: string;
+  issueBody?: string;
 }
 
 export interface ScheduleJob {
@@ -48,8 +54,12 @@ export interface ScheduleJob {
   agent: AgentProvider;
   userId?: string;
   repository?: string;
+  createRepository?: string;
   cloneUrl?: string;
   githubToken?: string;
   permissions?: GitHubPermissions;
+  testCommand?: string;
+  issueTitle?: string;
+  issueBody?: string;
   enqueuedAt: string;
 }

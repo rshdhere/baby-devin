@@ -68,17 +68,27 @@ const server = createServer(async (req, res) => {
         permissions?: {
           canCommit: boolean;
           canCreatePr: boolean;
+          canCreateRepo: boolean;
+          canCreateIssue: boolean;
           canPush: boolean;
         };
+        createRepository?: string;
+        testCommand?: string;
+        issueTitle?: string;
+        issueBody?: string;
       };
       const task = tasks.createTask({
         prompt: parsed.prompt ?? "",
         agent: parsed.agent,
         userId: parsed.userId,
         repository: parsed.repository,
+        createRepository: parsed.createRepository,
         cloneUrl: parsed.cloneUrl,
         githubToken: parsed.githubToken,
         permissions: parsed.permissions,
+        testCommand: parsed.testCommand,
+        issueTitle: parsed.issueTitle,
+        issueBody: parsed.issueBody,
       });
       res.writeHead(202, { "Content-Type": "application/json" });
       res.end(JSON.stringify(task));

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/rshdhere/devin/apps/runtime/internal/executil"
@@ -22,7 +21,7 @@ func (r *CursorRunner) Run(
 	req RunRequest,
 	publish func(eventType, message string, data map[string]any),
 ) (*RunResult, error) {
-	if os.Getenv("CURSOR_API_KEY") == "" {
+	if envValue(req, "CURSOR_API_KEY") == "" {
 		return &RunResult{
 			Status:  "failed",
 			Message: "CURSOR_API_KEY is not set",
@@ -45,7 +44,7 @@ func (r *CursorRunner) Run(
 	command := shellQuote(r.cfg.CursorBin) + " " + joinShellArgs(args)
 	publish("agent.log", "running cursor agent", map[string]any{"command": command})
 
-	result, err := executil.Run(ctx, r.cfg.Workspace, command, nil)
+	result, err := executil.Run(ctx, r.cfg.Workspace, command, mergeEnv(req))
 	if err != nil {
 		return nil, err
 	}

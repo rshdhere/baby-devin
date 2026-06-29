@@ -2,6 +2,7 @@ export interface RunRequest {
   taskId: string;
   prompt: string;
   agent?: string;
+  env?: Record<string, string>;
 }
 
 export interface RunResponse {

@@ -80,9 +80,14 @@ ExecStart=/usr/bin/docker run --rm --name scheduler \\\\
   -e QUEUE_DRIVER=\\\${QUEUE_DRIVER} \\\\
   -e SQS_QUEUE_URL=\\\${SQS_QUEUE_URL} \\\\
   -e AWS_REGION=\${AWS_REGION} \\\\
-  -e DEFAULT_AGENT=mock \\\\
+  -e DEFAULT_AGENT=cursor \\\\
   -e SANDBOX_READY_TIMEOUT_SECONDS=300 \\\\
   -e RUNTIME_READY_TIMEOUT_SECONDS=60 \\\\
+  -e CURSOR_API_KEY=\\\${CURSOR_API_KEY:-} \\\\
+  -e ANTHROPIC_API_KEY=\\\${ANTHROPIC_API_KEY:-} \\\\
+  -e GITHUB_BOT_TOKEN=\\\${GITHUB_BOT_TOKEN:-} \\\\
+  -e GITHUB_BOT_NAME=\\\${GITHUB_BOT_NAME:-baby-devin-bot} \\\\
+  -e GITHUB_BOT_EMAIL=\\\${GITHUB_BOT_EMAIL:-baby-devin-bot@users.noreply.github.com} \\\\
   \${REGISTRY}/devin-scheduler:\${IMAGE_TAG}
 ExecStop=/usr/bin/docker stop scheduler
 

@@ -3,6 +3,8 @@ import { authConfig } from "@/lib/auth-config";
 export interface GitHubPermissions {
   canCommit: boolean;
   canCreatePr: boolean;
+  canCreateRepo: boolean;
+  canCreateIssue: boolean;
   canPush: boolean;
 }
 
@@ -38,6 +40,8 @@ export async function updateDashboardSettings(
   data: Partial<DashboardSettings> & {
     githubCanCommit?: boolean;
     githubCanCreatePr?: boolean;
+    githubCanCreateRepo?: boolean;
+    githubCanCreateIssue?: boolean;
     githubCanPush?: boolean;
   },
 ) {
@@ -54,6 +58,8 @@ export async function updateDashboardSettings(
   if (data.githubPermissions) {
     payload.githubCanCommit = data.githubPermissions.canCommit;
     payload.githubCanCreatePr = data.githubPermissions.canCreatePr;
+    payload.githubCanCreateRepo = data.githubPermissions.canCreateRepo;
+    payload.githubCanCreateIssue = data.githubPermissions.canCreateIssue;
     payload.githubCanPush = data.githubPermissions.canPush;
   }
   if (data.githubCanCommit !== undefined) {
@@ -61,6 +67,12 @@ export async function updateDashboardSettings(
   }
   if (data.githubCanCreatePr !== undefined) {
     payload.githubCanCreatePr = data.githubCanCreatePr;
+  }
+  if (data.githubCanCreateRepo !== undefined) {
+    payload.githubCanCreateRepo = data.githubCanCreateRepo;
+  }
+  if (data.githubCanCreateIssue !== undefined) {
+    payload.githubCanCreateIssue = data.githubCanCreateIssue;
   }
   if (data.githubCanPush !== undefined) {
     payload.githubCanPush = data.githubCanPush;

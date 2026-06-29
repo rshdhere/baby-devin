@@ -34,6 +34,8 @@ githubRouter.get("/status", async (req, res) => {
     permissions: {
       canCommit: settings?.githubCanCommit ?? true,
       canCreatePr: settings?.githubCanCreatePr ?? true,
+      canCreateRepo: settings?.githubCanCreateRepo ?? true,
+      canCreateIssue: settings?.githubCanCreateIssue ?? true,
       canPush: settings?.githubCanPush ?? true,
     },
     selectedRepository: settings?.selectedRepository ?? null,
@@ -90,7 +92,8 @@ githubRouter.patch("/permissions", async (req, res) => {
     return;
   }
 
-  const { canCommit, canCreatePr, canPush } = parsed.data;
+  const { canCommit, canCreatePr, canCreateRepo, canCreateIssue, canPush } =
+    parsed.data;
 
   await db
     .insert(userDashboardSettings)
@@ -98,6 +101,8 @@ githubRouter.patch("/permissions", async (req, res) => {
       userId,
       githubCanCommit: canCommit,
       githubCanCreatePr: canCreatePr,
+      githubCanCreateRepo: canCreateRepo,
+      githubCanCreateIssue: canCreateIssue,
       githubCanPush: canPush,
     })
     .onConflictDoUpdate({
@@ -105,6 +110,8 @@ githubRouter.patch("/permissions", async (req, res) => {
       set: {
         githubCanCommit: canCommit,
         githubCanCreatePr: canCreatePr,
+        githubCanCreateRepo: canCreateRepo,
+        githubCanCreateIssue: canCreateIssue,
         githubCanPush: canPush,
       },
     });
@@ -113,6 +120,8 @@ githubRouter.patch("/permissions", async (req, res) => {
     permissions: {
       canCommit,
       canCreatePr,
+      canCreateRepo,
+      canCreateIssue,
       canPush,
     },
   });
