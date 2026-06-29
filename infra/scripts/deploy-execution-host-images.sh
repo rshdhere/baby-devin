@@ -60,18 +60,35 @@ SSM_PREFIX="${SSM_PREFIX}"
 
 log() { printf '%s\n' "\$*"; }
 
-patch_scheduler_unit() {
+write_scheduler_unit() {
   local unit="/etc/systemd/system/devin-scheduler.service"
-  [[ -f "\$unit" ]] || return 0
+  cat >"\$unit" <<UNIT
+[Unit]
+Description=devin.baby scheduler
+After=devin-firecracker-host.service
+Wants=devin-firecracker-host.service
 
-  sed -i "s|\${REGISTRY}/devin-scheduler:[^\" ]*|\${REGISTRY}/devin-scheduler:\${IMAGE_TAG}|g" "\$unit"
+[Service]
+Restart=always
+RestartSec=5
+Environment=ORCHESTRATOR_URL=http://pending-ssm-sync:9090
+ExecStart=/usr/bin/docker run --rm --name scheduler \\\\
+  --network host \\\\
+  -e SCHEDULER_PORT=9091 \\\\
+  -e ORCHESTRATOR_URL=\\\${ORCHESTRATOR_URL} \\\\
+  -e FIRECRACKER_HOST_URL=http://127.0.0.1:9092 \\\\
+  -e QUEUE_DRIVER=\\\${QUEUE_DRIVER} \\\\
+  -e SQS_QUEUE_URL=\\\${SQS_QUEUE_URL} \\\\
+  -e AWS_REGION=\${AWS_REGION} \\\\
+  -e DEFAULT_AGENT=mock \\\\
+  -e SANDBOX_READY_TIMEOUT_SECONDS=120 \\\\
+  -e RUNTIME_READY_TIMEOUT_SECONDS=60 \\\\
+  \${REGISTRY}/devin-scheduler:\${IMAGE_TAG}
+ExecStop=/usr/bin/docker stop scheduler
 
-  if ! grep -q FIRECRACKER_HOST_URL "\$unit"; then
-    sed -i '/-e ORCHESTRATOR_URL=/a\  -e FIRECRACKER_HOST_URL=http://127.0.0.1:9092 \\' "\$unit"
-  fi
-  if ! grep -q SANDBOX_READY_TIMEOUT_SECONDS "\$unit"; then
-    sed -i '/-e DEFAULT_AGENT=/a\  -e SANDBOX_READY_TIMEOUT_SECONDS=120 \\\n  -e RUNTIME_READY_TIMEOUT_SECONDS=60 \\' "\$unit"
-  fi
+[Install]
+WantedBy=multi-user.target
+UNIT
 }
 
 patch_firecracker_unit() {
@@ -86,7 +103,7 @@ log "Pulling \${REGISTRY}/devin-scheduler:\${IMAGE_TAG}"
 docker pull "\${REGISTRY}/devin-scheduler:\${IMAGE_TAG}"
 
 patch_firecracker_unit
-patch_scheduler_unit
+write_scheduler_unit
 systemctl daemon-reload
 
 if systemctl list-unit-files | grep -q devin-firecracker-host.service; then
@@ -110,18 +127,20 @@ fi
 
 if systemctl list-unit-files | grep -q devin-scheduler.service; then
   log "Restarting devin-scheduler"
-  systemctl restart devin-scheduler.service
+  if ! systemctl restart devin-scheduler.service; then
+    journalctl -u devin-scheduler.service -n 30 --no-pager >&2 || true
+    exit 1
+  fi
   for _ in \$(seq 1 30); do
     if curl -sf http://127.0.0.1:9091/health >/dev/null 2>&1; then
       break
     fi
     sleep 2
   done
-  curl -sf http://127.0.0.1:9091/health
-  PRIVATE_IP="\$(curl -sf http://169.254.169.254/latest/meta-data/local-ipv4 || true)"
-  if [[ -n "\$PRIVATE_IP" ]]; then
-    log "Verifying scheduler on host private IP \${PRIVATE_IP}:9091"
-    curl -sf "http://\${PRIVATE_IP}:9091/health"
+  if ! curl -sf http://127.0.0.1:9091/health; then
+    journalctl -u devin-scheduler.service -n 30 --no-pager >&2 || true
+    systemctl status devin-scheduler.service --no-pager >&2 || true
+    exit 1
   fi
 else
   log "devin-scheduler.service not installed — skipping"
