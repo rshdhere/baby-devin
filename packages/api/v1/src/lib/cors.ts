@@ -10,7 +10,7 @@ function parseOriginList(value: string | undefined): string[] {
 }
 
 function deriveWildcardOrigins(urls: string[]): string[] {
-  const wildcards = new Set<string>();
+  const derived = new Set<string>();
 
   for (const url of urls) {
     try {
@@ -30,13 +30,14 @@ function deriveWildcardOrigins(urls: string[]): string[] {
       }
 
       const rootDomain = parts.slice(-2).join(".");
-      wildcards.add(`${protocol}//*.${rootDomain}`);
+      derived.add(`${protocol}//${rootDomain}`);
+      derived.add(`${protocol}//*.${rootDomain}`);
     } catch {
       continue;
     }
   }
 
-  return [...wildcards];
+  return [...derived];
 }
 
 function matchesWildcardOrigin(origin: string, pattern: string): boolean {
