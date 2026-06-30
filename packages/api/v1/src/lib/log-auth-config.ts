@@ -36,11 +36,29 @@ function resolveCrossSubDomainCookieDomain(): string | undefined {
   return undefined;
 }
 
+function shouldUseSecureCookies(): boolean {
+  const authUrl = process.env.BETTER_AUTH_URL?.trim();
+  if (authUrl?.startsWith("https://")) {
+    return true;
+  }
+
+  const webAppUrl = process.env.WEB_APP_URL?.trim();
+  if (webAppUrl?.startsWith("https://")) {
+    return true;
+  }
+
+  return process.env.NODE_ENV === "production";
+}
+
 export function logAuthConfig() {
   const allowedOrigins = getAllowedOrigins();
   const crossSubDomainCookieDomain = resolveCrossSubDomainCookieDomain();
+  const useSecureCookies = shouldUseSecureCookies();
 
   console.log(`auth allowed origins: ${allowedOrigins.join(", ")}`);
+  console.log(
+    `auth secure cookies: ${useSecureCookies ? "enabled" : "disabled"}`,
+  );
   console.log(
     crossSubDomainCookieDomain
       ? `auth cross-subdomain cookie domain: ${crossSubDomainCookieDomain}`

@@ -99,6 +99,20 @@ function resolveCrossSubDomainCookieDomain(): string | undefined {
 
 const crossSubDomainCookieDomain = resolveCrossSubDomainCookieDomain();
 
+function shouldUseSecureCookies(): boolean {
+  const authUrl = process.env.BETTER_AUTH_URL?.trim();
+  if (authUrl?.startsWith("https://")) {
+    return true;
+  }
+
+  const webAppUrl = process.env.WEB_APP_URL?.trim();
+  if (webAppUrl?.startsWith("https://")) {
+    return true;
+  }
+
+  return process.env.NODE_ENV === "production";
+}
+
 export const auth = betterAuth({
   basePath: "/api/v1/auth",
   baseURL: process.env.BETTER_AUTH_URL,
@@ -110,16 +124,17 @@ export const auth = betterAuth({
       trustedProviders: ["github", "google"],
     },
   },
-  ...(crossSubDomainCookieDomain
-    ? {
-        advanced: {
+  advanced: {
+    useSecureCookies: shouldUseSecureCookies(),
+    ...(crossSubDomainCookieDomain
+      ? {
           crossSubDomainCookies: {
             enabled: true,
             domain: crossSubDomainCookieDomain,
           },
-        },
-      }
-    : {}),
+        }
+      : {}),
+  },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
