@@ -14,9 +14,29 @@ export function AuthRedirectIfLoggedIn({ children }: { children: ReactNode }) {
   const minDurationElapsed = useMinimumLoadingDuration();
 
   useEffect(() => {
-    if (!isPending && session && minDurationElapsed) {
-      router.replace(getCallbackURL("/dashboard"));
+    if (isPending || !minDurationElapsed) {
+      return;
     }
+
+    if (session) {
+      router.replace(getCallbackURL("/dashboard"));
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const refreshed = await authClient.getSession();
+      if (cancelled || !refreshed.data) {
+        return;
+      }
+
+      router.replace(getCallbackURL("/dashboard"));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isPending, minDurationElapsed, router, session]);
 
   if (isPending || !minDurationElapsed || session) {

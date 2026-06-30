@@ -38,9 +38,7 @@ const socialProviders = [
   },
 ];
 
-export function SocialAuthButtons({
-  callbackURL = getCallbackURL("/dashboard"),
-}: SocialAuthButtonsProps) {
+export function SocialAuthButtons({ callbackURL }: SocialAuthButtonsProps) {
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,18 +48,20 @@ export function SocialAuthButtons({
     setLoadingProvider(provider.id);
     setError(null);
 
+    const targetCallbackURL = callbackURL ?? getCallbackURL("/dashboard");
+
     try {
       if (provider.type === "social") {
         await authClient.signIn.social({
           provider: provider.provider,
-          callbackURL,
+          callbackURL: targetCallbackURL,
         });
         return;
       }
 
       await authClient.signIn.oauth2({
         providerId: provider.providerId,
-        callbackURL,
+        callbackURL: targetCallbackURL,
       });
     } catch {
       setError("Unable to sign in with this provider. Please try again.");

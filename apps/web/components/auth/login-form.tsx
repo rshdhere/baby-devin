@@ -79,7 +79,7 @@ export function LoginForm() {
 
   return (
     <>
-      <SocialAuthButtons callbackURL={getCallbackURL("/dashboard")} />
+      <SocialAuthButtons />
 
       <AuthDivider />
 

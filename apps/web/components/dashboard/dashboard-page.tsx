@@ -14,12 +14,27 @@ export function DashboardPage() {
   const minDurationElapsed = useMinimumLoadingDuration();
 
   useEffect(() => {
-    if (!isPending && !session && minDurationElapsed) {
+    if (isPending || session || !minDurationElapsed) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const refreshed = await authClient.getSession();
+      if (cancelled || refreshed.data) {
+        return;
+      }
+
       const authError = searchParams.get("error");
       router.replace(
         authError ? `/login?error=${encodeURIComponent(authError)}` : "/login",
       );
-    }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isPending, minDurationElapsed, router, searchParams, session]);
 
   if (isPending || !minDurationElapsed || !session) {
