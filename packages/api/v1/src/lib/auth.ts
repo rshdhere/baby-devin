@@ -115,6 +115,14 @@ function shouldUseSecureCookies(): boolean {
 
 const useSecureCookies = shouldUseSecureCookies();
 
+console.log(`[AUTH CONFIG] useSecureCookies: ${useSecureCookies}`);
+console.log(
+  `[AUTH CONFIG] crossSubDomainCookieDomain: ${crossSubDomainCookieDomain ?? "(disabled)"}`,
+);
+console.log(
+  `[AUTH CONFIG] Expected cookie name: ${useSecureCookies ? "__Secure-better-auth.session_token" : "better-auth.session_token"}`,
+);
+
 export const auth = betterAuth({
   basePath: "/api/v1/auth",
   baseURL: process.env.BETTER_AUTH_URL,
@@ -133,6 +141,11 @@ export const auth = betterAuth({
           crossSubDomainCookies: {
             enabled: true,
             domain: crossSubDomainCookieDomain,
+          },
+          defaultCookieAttributes: {
+            sameSite: "none" as const,
+            secure: true,
+            httpOnly: true,
           },
         }
       : {}),

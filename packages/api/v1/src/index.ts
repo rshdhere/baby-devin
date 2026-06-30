@@ -32,7 +32,32 @@ app.use((req, res, next) => {
   next();
 });
 
-app.all("/api/v1/auth/{*any}", toNodeHandler(auth));
+const authHandler = toNodeHandler(auth);
+
+app.all("/api/v1/auth/{*any}", (req, res, next) => {
+  const originalSetHeader = res.setHeader.bind(res);
+  res.setHeader = (
+    name: string,
+    value: string | number | readonly string[],
+  ) => {
+    if (name.toLowerCase() === "set-cookie") {
+      console.log(`[AUTH DEBUG] Set-Cookie header:`, value);
+    }
+    return originalSetHeader(name, value);
+  };
+
+  if (req.path.includes("/callback") || req.path.includes("/get-session")) {
+    console.log(`[AUTH DEBUG] ${req.method} ${req.path}`);
+    console.log(`[AUTH DEBUG] Origin: ${req.headers.origin}`);
+    console.log(`[AUTH DEBUG] Cookie header: ${req.headers.cookie}`);
+    console.log(
+      `[AUTH DEBUG] X-Forwarded-Proto: ${req.headers["x-forwarded-proto"]}`,
+    );
+    console.log(`[AUTH DEBUG] Protocol: ${req.protocol}`);
+  }
+
+  authHandler(req, res, next);
+});
 
 app.use(express.json());
 app.use("/api/v1/", router);
