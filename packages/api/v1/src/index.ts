@@ -41,20 +41,30 @@ app.all("/api/v1/auth/{*any}", (req, res, next) => {
     value: string | number | readonly string[],
   ) => {
     if (name.toLowerCase() === "set-cookie") {
-      console.log(`[AUTH DEBUG] Set-Cookie header:`, value);
+      const cookies = Array.isArray(value) ? value : [String(value)];
+      const enhancedCookies: string[] = [];
+
+      for (const cookie of cookies) {
+        enhancedCookies.push(cookie);
+
+        if (
+          cookie.includes("Domain=.") &&
+          cookie.includes("session_token=") &&
+          !cookie.includes("Max-Age=0")
+        ) {
+          const cookieName = cookie.split("=")[0];
+          if (cookieName) {
+            enhancedCookies.push(
+              `${cookieName}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=None`,
+            );
+          }
+        }
+      }
+
+      return originalSetHeader(name, enhancedCookies);
     }
     return originalSetHeader(name, value);
   };
-
-  if (req.path.includes("/callback") || req.path.includes("/get-session")) {
-    console.log(`[AUTH DEBUG] ${req.method} ${req.path}`);
-    console.log(`[AUTH DEBUG] Origin: ${req.headers.origin}`);
-    console.log(`[AUTH DEBUG] Cookie header: ${req.headers.cookie}`);
-    console.log(
-      `[AUTH DEBUG] X-Forwarded-Proto: ${req.headers["x-forwarded-proto"]}`,
-    );
-    console.log(`[AUTH DEBUG] Protocol: ${req.protocol}`);
-  }
 
   authHandler(req, res, next);
 });
