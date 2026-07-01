@@ -73,6 +73,7 @@ const server = createServer(async (req, res) => {
           canPush: boolean;
         };
         createRepository?: string;
+        autoCreateRepository?: boolean;
         testCommand?: string;
         issueTitle?: string;
         issueBody?: string;
@@ -83,6 +84,7 @@ const server = createServer(async (req, res) => {
         userId: parsed.userId,
         repository: parsed.repository,
         createRepository: parsed.createRepository,
+        autoCreateRepository: parsed.autoCreateRepository,
         cloneUrl: parsed.cloneUrl,
         githubToken: parsed.githubToken,
         permissions: parsed.permissions,
@@ -168,7 +170,12 @@ const server = createServer(async (req, res) => {
       res.write(formatSSE(event));
     });
 
+    const keepalive = setInterval(() => {
+      res.write(": keepalive\n\n");
+    }, 15_000);
+
     req.on("close", () => {
+      clearInterval(keepalive);
       unsubscribe();
     });
     return;

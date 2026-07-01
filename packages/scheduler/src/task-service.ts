@@ -15,7 +15,10 @@ import {
   createGitHubPullRequest,
   createGitHubRepository,
   fetchDefaultBranch,
+  fetchGitHubUserIdentity,
+  type GitHubUserIdentity,
 } from "./github.js";
+import { generateProjectMetadata } from "./project-metadata.js";
 import type {
   AgentProvider,
   CreateTaskInput,
@@ -120,6 +123,7 @@ export class TaskService {
         userId: input.userId,
         repository: input.repository,
         createRepository: input.createRepository,
+        autoCreateRepository: input.autoCreateRepository,
         cloneUrl: input.cloneUrl,
         githubToken: input.githubToken,
         permissions: input.permissions,
@@ -278,8 +282,19 @@ export class TaskService {
       let repository = job.repository;
       let cloneUrl = job.cloneUrl;
       const githubToken = job.githubToken;
+      let gitOwner: GitHubUserIdentity | undefined;
 
-      if (!repository && job.createRepository) {
+      if (githubToken) {
+        try {
+          gitOwner = await fetchGitHubUserIdentity(githubToken);
+        } catch {
+          // commits still work with bot co-author trailer if identity lookup fails
+        }
+      }
+
+      let createdNewRepo = false;
+
+      if (!repository && (job.createRepository || job.autoCreateRepository)) {
         if (!githubToken) {
           throw new Error("GitHub token is required for repository creation");
         }
@@ -287,11 +302,19 @@ export class TaskService {
           throw new Error("repository creation is not permitted");
         }
 
-        const created = await createGitHubRepository(
-          githubToken,
-          job.createRepository,
-          { description: task.title },
-        );
+        let repoName = job.createRepository?.trim();
+        let repoDescription = task.title;
+
+        if (!repoName) {
+          const metadata = await generateProjectMetadata(task.prompt);
+          repoName = metadata.repoName;
+          repoDescription = metadata.description;
+          task.title = metadata.title;
+        }
+
+        const created = await createGitHubRepository(githubToken, repoName, {
+          description: repoDescription,
+        });
         repository = created.fullName;
         task.repository = repository;
         cloneUrl = authenticatedCloneUrl(githubToken, repository);
@@ -301,23 +324,44 @@ export class TaskService {
         this.emit("git.repo", task.id, `Created repository ${repository}`, {
           repository,
           htmlUrl: created.htmlUrl,
+          owner: gitOwner?.login,
         });
+        createdNewRepo = true;
       }
 
       if (cloneUrl && repository) {
-        this.emit("git.clone", task.id, `Cloning ${repository}`, {
+        this.emit("git.clone", task.id, `Preparing ${repository}`, {
           repository,
         });
-        await runtime.gitClone({
-          taskId: task.id,
-          url: cloneUrl,
-          path: repoCwd,
-        });
-        await this.configureSandboxGit(runtime, task.id, githubToken);
-        agentPrompt = buildAgentPrompt(task.prompt, repository, repoCwd);
+        if (createdNewRepo) {
+          await this.initializeEmptyRepository(
+            runtime,
+            task.id,
+            cloneUrl,
+            repoCwd,
+          );
+        } else {
+          await runtime.gitClone({
+            taskId: task.id,
+            url: cloneUrl,
+            path: repoCwd,
+          });
+        }
+        await this.configureSandboxGit(runtime, task.id, gitOwner);
+        agentPrompt = buildAgentPrompt(
+          task.prompt,
+          repository,
+          repoCwd,
+          gitOwner,
+        );
       } else if (githubToken) {
-        await this.configureSandboxGit(runtime, task.id, githubToken);
+        await this.configureSandboxGit(runtime, task.id, gitOwner);
       }
+
+      const stopAutoCommit =
+        repository && cloneUrl
+          ? this.startAutoCommitWatcher(runtime, task, job, repoCwd, gitOwner)
+          : () => undefined;
 
       const stopEvents = this.forwardRuntimeEvents(runtimeBaseUrl, task.id);
 
@@ -328,14 +372,18 @@ export class TaskService {
         repository,
       });
 
-      const runResult = await runtime.run({
-        taskId: task.id,
-        prompt: agentPrompt,
-        agent: task.agent,
-        env: this.runtimeSecrets(githubToken),
-      });
-
-      stopEvents();
+      let runResult;
+      try {
+        runResult = await runtime.run({
+          taskId: task.id,
+          prompt: agentPrompt,
+          agent: task.agent,
+          env: this.runtimeSecrets(githubToken),
+        });
+      } finally {
+        stopAutoCommit();
+        stopEvents();
+      }
 
       if (runResult.status === "failed") {
         throw new Error(runResult.message);
@@ -489,7 +537,7 @@ export class TaskService {
     if (permissions.canCommit) {
       await runtime.gitCommit({
         taskId: task.id,
-        message: `devin: ${task.title ?? "agent changes"}`,
+        message: buildCommitMessage(`devin: ${task.title ?? "agent changes"}`),
         paths: ["."],
         cwd: repoCwd,
       });
@@ -551,20 +599,98 @@ export class TaskService {
     }
   }
 
+  private async initializeEmptyRepository(
+    runtime: RuntimeClient,
+    taskId: string,
+    cloneUrl: string,
+    repoCwd: string,
+  ): Promise<void> {
+    await runtime.terminal({
+      taskId,
+      command: `mkdir -p ${repoCwd} && git -C ${repoCwd} init -b main && git -C ${repoCwd} remote add origin '${escapeShell(cloneUrl)}'`,
+    });
+  }
+
   private async configureSandboxGit(
     runtime: RuntimeClient,
     taskId: string,
-    token?: string,
+    owner?: GitHubUserIdentity,
   ): Promise<void> {
-    if (!token) {
+    if (!owner) {
       return;
     }
 
-    const author = resolveBotAuthor();
     await runtime.terminal({
       taskId,
-      command: `git config --global user.name '${escapeShell(author.name)}' && git config --global user.email '${escapeShell(author.email)}'`,
+      command: `git config --global user.name '${escapeShell(owner.name)}' && git config --global user.email '${escapeShell(owner.email)}'`,
     });
+  }
+
+  private startAutoCommitWatcher(
+    runtime: RuntimeClient,
+    task: Task,
+    job: ScheduleJob,
+    repoCwd: string,
+    gitOwner?: GitHubUserIdentity,
+  ): () => void {
+    if (!job.permissions?.canCommit) {
+      return () => undefined;
+    }
+
+    let stopped = false;
+    let lastDirtyFingerprint = "";
+
+    const tick = async () => {
+      if (stopped) {
+        return;
+      }
+
+      try {
+        const status = await runtime.terminal({
+          taskId: task.id,
+          command: "git status --porcelain",
+          cwd: repoCwd,
+        });
+        const dirty = status.stdout.trim();
+        if (!dirty || dirty === lastDirtyFingerprint) {
+          return;
+        }
+
+        const diff = await runtime.terminal({
+          taskId: task.id,
+          command: "git diff --stat && git diff --cached --stat",
+          cwd: repoCwd,
+        });
+
+        await runtime.gitCommit({
+          taskId: task.id,
+          message: buildCommitMessage(
+            `devin: checkpoint — ${task.title ?? "work in progress"}`,
+          ),
+          paths: ["."],
+          cwd: repoCwd,
+        });
+
+        lastDirtyFingerprint = dirty;
+        this.emit("git.commit", task.id, "Auto-committed checkpoint", {
+          auto: true,
+          author: gitOwner?.login,
+          coAuthor: resolveBotAuthor().name,
+          diff: diff.stdout.trim(),
+        });
+      } catch {
+        // ignore transient sandbox/git errors during long agent runs
+      }
+    };
+
+    const interval = setInterval(() => {
+      void tick();
+    }, 90_000);
+
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
   }
 
   private async runTests(
@@ -936,18 +1062,36 @@ function resolveBotAuthor(): { name: string; email: string } {
   };
 }
 
+function coAuthorTrailer(): string {
+  const bot = resolveBotAuthor();
+  return `Co-authored-by: ${bot.name} <${bot.email}>`;
+}
+
+function buildCommitMessage(subject: string): string {
+  return `${subject}\n\n${coAuthorTrailer()}`;
+}
+
 function buildAgentPrompt(
   prompt: string,
   repository: string,
   repoCwd: string,
+  owner?: GitHubUserIdentity,
 ): string {
+  const bot = resolveBotAuthor();
+  const ownerLine = owner
+    ? `Repository owner: ${owner.login}. You are committing on their behalf.`
+    : "Repository owner: connected GitHub user.";
+
   return [
     `Repository ${repository} is cloned at /workspace/${repoCwd}. Work in that directory.`,
+    ownerLine,
     "",
     "Sandbox tooling:",
     "- GITHUB_TOKEN is available for gh and git",
     "- Run tests before finishing when applicable",
     "- You may commit, push, open pull requests, and create issues with gh",
+    `- Every commit MUST include this trailer on a new line in the commit message body: Co-authored-by: ${bot.name} <${bot.email}>`,
+    "- Commit incrementally when meaningful progress is made",
     "",
     prompt,
   ].join("\n");

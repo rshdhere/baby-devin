@@ -77,6 +77,7 @@ export const createTaskSchema = z.object({
     .string()
     .regex(/^[\w.-]+$/)
     .optional(),
+  autoCreateRepository: z.boolean().optional(),
   testCommand: z.string().min(1).max(500).optional(),
   issueTitle: z.string().min(1).max(200).optional(),
   issueBody: z.string().max(8000).optional(),

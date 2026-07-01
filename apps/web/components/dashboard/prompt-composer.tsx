@@ -21,18 +21,9 @@ import { PromptMetadataBar } from "@/components/dashboard/prompt-metadata-bar";
 import { useSessions } from "@/components/dashboard/sessions-context";
 import { cn } from "@/lib/utils";
 
-function slugifyRepositoryName(prompt: string): string {
-  const slug = prompt
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return slug || "devin-project";
-}
+const MIN_TEXTAREA_HEIGHT = 72;
 
 type RepoMode = "existing" | "create";
-
-const MIN_TEXTAREA_HEIGHT = 72;
 
 const textareaSpring = {
   type: "spring" as const,
@@ -115,10 +106,7 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
     setError(null);
 
     try {
-      const finalRepoName =
-        repoMode === "create"
-          ? newRepoName.trim() || slugifyRepositoryName(trimmed)
-          : undefined;
+      const finalRepoName = newRepoName.trim();
 
       await startSession({
         prompt: trimmed,
@@ -127,7 +115,10 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
           repoMode === "existing"
             ? (selectedRepository ?? undefined)
             : undefined,
-        createRepository: finalRepoName,
+        createRepository:
+          repoMode === "create" && finalRepoName ? finalRepoName : undefined,
+        autoCreateRepository:
+          repoMode === "create" && !finalRepoName ? true : undefined,
       });
       setPrompt("");
       setNewRepoName("");
@@ -368,8 +359,8 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
                           placeholder="repo-name (optional)"
                           className="w-full rounded-lg border border-[#333] bg-[#111] px-2.5 py-1.5 text-[12px] text-white placeholder:text-gray-600 focus:border-emerald-500/50 focus:outline-none"
                         />
-                        <p className="mt-1.5 text-[10px] text-gray-500">
-                          Leave empty to auto-generate from prompt
+                        <p className="text-[11px] text-gray-500">
+                          Leave empty for an AI-generated repo name
                         </p>
                       </div>
                     ) : null}

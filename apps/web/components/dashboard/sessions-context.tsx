@@ -21,6 +21,7 @@ interface SessionsContextValue {
     agent?: Task["agent"];
     repository?: string;
     createRepository?: string;
+    autoCreateRepository?: boolean;
     testCommand?: string;
     issueTitle?: string;
     issueBody?: string;
@@ -71,6 +72,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
       agent?: Task["agent"];
       repository?: string;
       createRepository?: string;
+      autoCreateRepository?: boolean;
       testCommand?: string;
       issueTitle?: string;
       issueBody?: string;

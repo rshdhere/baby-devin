@@ -211,12 +211,7 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 	)
 	s.appendLog("git commit: " + req.Message)
 
-	result, err := executil.Run(r.Context(), cwd, command, []string{
-		"GIT_AUTHOR_NAME=devin-agent",
-		"GIT_AUTHOR_EMAIL=agent@devin.baby",
-		"GIT_COMMITTER_NAME=devin-agent",
-		"GIT_COMMITTER_EMAIL=agent@devin.baby",
-	})
+	result, err := executil.Run(r.Context(), cwd, command, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -363,10 +358,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	updates, unsubscribe := s.eventBus.Subscribe(taskID)
 	defer unsubscribe()
 
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-keepalive.C:
+			_, _ = w.Write([]byte(": keepalive\n\n"))
+			flusher.Flush()
 		case event, ok := <-updates:
 			if !ok {
 				return

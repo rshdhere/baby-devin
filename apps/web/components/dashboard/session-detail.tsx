@@ -508,6 +508,11 @@ function EventRow({ event }: { event: TaskEvent }) {
           </div>
           {isRepoCreated ? (
             <p className="mt-1 text-[11px] text-emerald-400/80">
+              Commits from this task will be co-authored by @baby-devin-bot
+            </p>
+          ) : null}
+          {event.type === "git.commit" ? (
+            <p className="mt-1 text-[11px] text-emerald-400/80">
               Co-authored by @baby-devin-bot
             </p>
           ) : null}

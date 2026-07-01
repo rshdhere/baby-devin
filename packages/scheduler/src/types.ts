@@ -40,6 +40,7 @@ export interface CreateTaskInput {
   userId?: string;
   repository?: string;
   createRepository?: string;
+  autoCreateRepository?: boolean;
   cloneUrl?: string;
   githubToken?: string;
   permissions?: GitHubPermissions;
@@ -55,6 +56,7 @@ export interface ScheduleJob {
   userId?: string;
   repository?: string;
   createRepository?: string;
+  autoCreateRepository?: boolean;
   cloneUrl?: string;
   githubToken?: string;
   permissions?: GitHubPermissions;

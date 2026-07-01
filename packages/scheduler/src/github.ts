@@ -4,6 +4,12 @@ export interface CreatedRepository {
   defaultBranch: string;
 }
 
+export interface GitHubUserIdentity {
+  login: string;
+  name: string;
+  email: string;
+}
+
 export interface CreatedIssue {
   htmlUrl: string;
   number: number;
@@ -14,6 +20,62 @@ export function authenticatedCloneUrl(
   repository: string,
 ): string {
   return `https://x-access-token:${token}@github.com/${repository}.git`;
+}
+
+export async function fetchGitHubUserIdentity(
+  token: string,
+): Promise<GitHubUserIdentity> {
+  const user = await githubApiRequest<{
+    login: string;
+    name?: string | null;
+    id: number;
+    email?: string | null;
+  }>(token, "/user");
+
+  let email = user.email?.trim();
+  if (!email) {
+    try {
+      const emails = await githubApiRequest<
+        Array<{ email: string; primary?: boolean; verified?: boolean }>
+      >(token, "/user/emails");
+      const primary =
+        emails.find((entry) => entry.primary && entry.verified) ??
+        emails.find((entry) => entry.verified) ??
+        emails[0];
+      email = primary?.email?.trim();
+    } catch {
+      // fall back to GitHub noreply address
+    }
+  }
+
+  return {
+    login: user.login,
+    name: user.name?.trim() || user.login,
+    email: email ?? `${user.id}+${user.login}@users.noreply.github.com`,
+  };
+}
+
+async function githubApiRequest<T>(
+  token: string,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`GitHub API error ${response.status}: ${body}`);
+  }
+
+  return response.json() as Promise<T>;
 }
 
 export async function createGitHubRepository(
@@ -33,7 +95,7 @@ export async function createGitHubRepository(
       name,
       description: opts?.description,
       private: opts?.private ?? false,
-      auto_init: true,
+      auto_init: false,
     }),
   });
 

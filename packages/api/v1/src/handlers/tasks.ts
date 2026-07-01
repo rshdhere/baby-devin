@@ -73,6 +73,7 @@ tasksRouter.post("/", async (req, res) => {
     const repository =
       parsed.data.repository ?? settings?.selectedRepository ?? undefined;
     const createRepository = parsed.data.createRepository;
+    const autoCreateRepository = parsed.data.autoCreateRepository;
     const userToken = await getGitHubAccessToken(userId);
     const githubToken = userToken ?? undefined;
 
@@ -82,6 +83,7 @@ tasksRouter.post("/", async (req, res) => {
       userId,
       repository,
       createRepository,
+      autoCreateRepository,
       testCommand: parsed.data.testCommand,
       issueTitle: parsed.data.issueTitle,
       issueBody: parsed.data.issueBody,
