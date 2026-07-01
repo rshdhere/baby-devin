@@ -277,31 +277,26 @@ export class TaskService {
       let agentPrompt = task.prompt;
       let repository = job.repository;
       let cloneUrl = job.cloneUrl;
-      let githubToken = job.githubToken;
+      const githubToken = job.githubToken;
 
       if (!repository && job.createRepository) {
-        const botToken = resolveBotToken();
-        if (!botToken) {
-          throw new Error(
-            "GITHUB_BOT_TOKEN is not configured for repository creation",
-          );
+        if (!githubToken) {
+          throw new Error("GitHub token is required for repository creation");
         }
         if (!job.permissions?.canCreateRepo) {
           throw new Error("repository creation is not permitted");
         }
 
         const created = await createGitHubRepository(
-          botToken,
+          githubToken,
           job.createRepository,
           { description: task.title },
         );
         repository = created.fullName;
         task.repository = repository;
-        cloneUrl = authenticatedCloneUrl(botToken, repository);
-        githubToken = botToken;
+        cloneUrl = authenticatedCloneUrl(githubToken, repository);
         job.repository = repository;
         job.cloneUrl = cloneUrl;
-        job.githubToken = botToken;
 
         this.emit("git.repo", task.id, `Created repository ${repository}`, {
           repository,
@@ -318,20 +313,10 @@ export class TaskService {
           url: cloneUrl,
           path: repoCwd,
         });
-        await this.configureSandboxGit(
-          runtime,
-          task.id,
-          githubToken,
-          githubToken === resolveBotToken(),
-        );
+        await this.configureSandboxGit(runtime, task.id, githubToken);
         agentPrompt = buildAgentPrompt(task.prompt, repository, repoCwd);
       } else if (githubToken) {
-        await this.configureSandboxGit(
-          runtime,
-          task.id,
-          githubToken,
-          githubToken === resolveBotToken(),
-        );
+        await this.configureSandboxGit(runtime, task.id, githubToken);
       }
 
       const stopEvents = this.forwardRuntimeEvents(runtimeBaseUrl, task.id);
@@ -570,13 +555,12 @@ export class TaskService {
     runtime: RuntimeClient,
     taskId: string,
     token?: string,
-    useBot = false,
   ): Promise<void> {
     if (!token) {
       return;
     }
 
-    const author = resolveGitAuthor(useBot);
+    const author = resolveBotAuthor();
     await runtime.terminal({
       taskId,
       command: `git config --global user.name '${escapeShell(author.name)}' && git config --global user.email '${escapeShell(author.email)}'`,
@@ -943,18 +927,12 @@ function resolveBotToken(): string | undefined {
   return process.env.GITHUB_BOT_TOKEN?.trim() || undefined;
 }
 
-function resolveGitAuthor(useBot: boolean): { name: string; email: string } {
-  if (useBot) {
-    return {
-      name: process.env.GITHUB_BOT_NAME?.trim() || "baby-devin-bot",
-      email:
-        process.env.GITHUB_BOT_EMAIL?.trim() ||
-        "baby-devin-bot@users.noreply.github.com",
-    };
-  }
+function resolveBotAuthor(): { name: string; email: string } {
   return {
-    name: process.env.GIT_AUTHOR_NAME?.trim() || "devin-agent",
-    email: process.env.GIT_AUTHOR_EMAIL?.trim() || "agent@devin.baby",
+    name: process.env.GITHUB_BOT_NAME?.trim() || "baby-devin-bot",
+    email:
+      process.env.GITHUB_BOT_EMAIL?.trim() ||
+      "baby-devin-bot@users.noreply.github.com",
   };
 }
 
