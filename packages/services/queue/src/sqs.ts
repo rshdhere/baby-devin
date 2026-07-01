@@ -1,4 +1,5 @@
 import {
+  ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
   ReceiveMessageCommand,
   SQSClient,
@@ -25,7 +26,7 @@ export class SqsQueue<T> implements TaskQueue<T> {
   constructor(options: SqsQueueOptions) {
     this.queueUrl = options.queueUrl;
     this.waitTimeSeconds = options.waitTimeSeconds ?? 20;
-    this.visibilityTimeoutSeconds = options.visibilityTimeoutSeconds ?? 300;
+    this.visibilityTimeoutSeconds = options.visibilityTimeoutSeconds ?? 3600;
     this.client = new SQSClient({
       region: options.region ?? process.env.AWS_REGION ?? "us-east-1",
     });
@@ -85,6 +86,23 @@ export class SqsQueue<T> implements TaskQueue<T> {
         const job = JSON.parse(message.Body) as QueueJob<T>;
         job.attempts += 1;
 
+        const heartbeat = setInterval(
+          () => {
+            void this.client
+              .send(
+                new ChangeMessageVisibilityCommand({
+                  QueueUrl: this.queueUrl,
+                  ReceiptHandle: message.ReceiptHandle!,
+                  VisibilityTimeout: this.visibilityTimeoutSeconds,
+                }),
+              )
+              .catch((error) => {
+                console.error("[queue:sqs] visibility heartbeat failed", error);
+              });
+          },
+          Math.max(60_000, (this.visibilityTimeoutSeconds * 1000) / 2),
+        );
+
         try {
           await this.handler(job);
           await this.client.send(
@@ -102,6 +120,8 @@ export class SqsQueue<T> implements TaskQueue<T> {
               }),
             );
           }
+        } finally {
+          clearInterval(heartbeat);
         }
       } catch (error) {
         console.error("[queue:sqs] poll failed", error);

@@ -360,7 +360,7 @@ export function PromptComposer({ selectedRepository }: PromptComposerProps) {
                           className="w-full rounded-lg border border-[#333] bg-[#111] px-2.5 py-1.5 text-[12px] text-white placeholder:text-gray-600 focus:border-emerald-500/50 focus:outline-none"
                         />
                         <p className="text-[11px] text-gray-500">
-                          Leave empty for an AI-generated repo name
+                          Leave empty for a random project name
                         </p>
                       </div>
                     ) : null}

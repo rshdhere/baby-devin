@@ -85,7 +85,15 @@ export class RuntimeClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      // Agent runs can take a long time; avoid client-side fetch timeouts.
+      signal: AbortSignal.timeout(2 * 60 * 60 * 1000),
     });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        errorBody || `Runtime run failed with status ${response.status}`,
+      );
+    }
     return response.json() as Promise<RunResponse>;
   }
 

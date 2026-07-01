@@ -13,7 +13,7 @@ import {
   authenticatedCloneUrl,
   createGitHubIssue,
   createGitHubPullRequest,
-  createGitHubRepository,
+  createGitHubRepositoryUnique,
   fetchDefaultBranch,
   fetchGitHubUserIdentity,
   type GitHubUserIdentity,
@@ -198,6 +198,10 @@ export class TaskService {
       return;
     }
 
+    if (task.status === "completed") {
+      return;
+    }
+
     let sandboxName: string | undefined;
 
     try {
@@ -279,10 +283,11 @@ export class TaskService {
 
       const repoCwd = "repo";
       let agentPrompt = task.prompt;
-      let repository = job.repository;
+      let repository = job.repository ?? task.repository;
       let cloneUrl = job.cloneUrl;
       const githubToken = job.githubToken;
       let gitOwner: GitHubUserIdentity | undefined;
+      let createdNewRepo = false;
 
       if (githubToken) {
         try {
@@ -292,8 +297,6 @@ export class TaskService {
         }
       }
 
-      let createdNewRepo = false;
-
       if (!repository && (job.createRepository || job.autoCreateRepository)) {
         if (!githubToken) {
           throw new Error("GitHub token is required for repository creation");
@@ -302,18 +305,12 @@ export class TaskService {
           throw new Error("repository creation is not permitted");
         }
 
-        let repoName = job.createRepository?.trim();
-        let repoDescription = task.title;
+        const metadata = generateProjectMetadata(task.prompt);
+        task.title = metadata.title;
 
-        if (!repoName) {
-          const metadata = await generateProjectMetadata(task.prompt);
-          repoName = metadata.repoName;
-          repoDescription = metadata.description;
-          task.title = metadata.title;
-        }
-
-        const created = await createGitHubRepository(githubToken, repoName, {
-          description: repoDescription,
+        const created = await createGitHubRepositoryUnique(githubToken, {
+          description: metadata.description,
+          preferredName: job.createRepository?.trim() || undefined,
         });
         repository = created.fullName;
         task.repository = repository;
@@ -325,7 +322,19 @@ export class TaskService {
           repository,
           htmlUrl: created.htmlUrl,
           owner: gitOwner?.login,
+          repoName: created.name,
         });
+        createdNewRepo = true;
+      } else if (
+        repository &&
+        githubToken &&
+        !cloneUrl &&
+        (job.autoCreateRepository || job.createRepository)
+      ) {
+        cloneUrl = authenticatedCloneUrl(githubToken, repository);
+        job.cloneUrl = cloneUrl;
+        job.repository = repository;
+        task.repository = repository;
         createdNewRepo = true;
       }
 
@@ -360,7 +369,14 @@ export class TaskService {
 
       const stopAutoCommit =
         repository && cloneUrl
-          ? this.startAutoCommitWatcher(runtime, task, job, repoCwd, gitOwner)
+          ? this.startAutoCommitWatcher(
+              runtime,
+              task,
+              job,
+              repoCwd,
+              gitOwner,
+              createdNewRepo,
+            )
           : () => undefined;
 
       const stopEvents = this.forwardRuntimeEvents(runtimeBaseUrl, task.id);
@@ -395,7 +411,9 @@ export class TaskService {
         }
 
         if (job.permissions) {
-          await this.finalizeGitWork(runtime, task, job, repoCwd);
+          await this.finalizeGitWork(runtime, task, job, repoCwd, {
+            greenfield: createdNewRepo,
+          });
         }
 
         if (
@@ -507,20 +525,58 @@ export class TaskService {
     task: Task,
     job: ScheduleJob,
     repoCwd: string,
+    opts?: { greenfield?: boolean },
   ): Promise<void> {
     const permissions = job.permissions;
     if (!permissions || !job.repository) {
       return;
     }
 
-    const branchName = `devin/${task.id.slice(0, 8)}`;
-    task.branch = branchName;
-
     const status = await runtime.terminal({
       taskId: task.id,
       command: "git status --porcelain",
       cwd: repoCwd,
     });
+
+    if (opts?.greenfield) {
+      const branchName = "main";
+      task.branch = branchName;
+
+      if (status.stdout.trim() && permissions.canCommit) {
+        await runtime.gitCommit({
+          taskId: task.id,
+          message: buildCommitMessage(
+            `devin: ${task.title ?? "agent changes"}`,
+          ),
+          paths: ["."],
+          cwd: repoCwd,
+        });
+      }
+
+      if (!permissions.canPush) {
+        return;
+      }
+
+      const pushResult = await runtime.gitPush({
+        taskId: task.id,
+        branch: branchName,
+        cwd: repoCwd,
+      });
+
+      if (pushResult.status === "completed") {
+        this.emit("git.push", task.id, `Pushed branch ${branchName}`, {
+          branch: branchName,
+        });
+      } else {
+        this.emit("git.push", task.id, "Push skipped or failed", {
+          branch: branchName,
+        });
+      }
+      return;
+    }
+
+    const branchName = `devin/${task.id.slice(0, 8)}`;
+    task.branch = branchName;
 
     if (!status.stdout.trim()) {
       return;
@@ -632,6 +688,7 @@ export class TaskService {
     job: ScheduleJob,
     repoCwd: string,
     gitOwner?: GitHubUserIdentity,
+    greenfield = false,
   ): () => void {
     if (!job.permissions?.canCommit) {
       return () => undefined;
@@ -671,13 +728,28 @@ export class TaskService {
           cwd: repoCwd,
         });
 
-        lastDirtyFingerprint = dirty;
+        lastDirtyFingerprint = "";
+
         this.emit("git.commit", task.id, "Auto-committed checkpoint", {
           auto: true,
           author: gitOwner?.login,
           coAuthor: resolveBotAuthor().name,
           diff: diff.stdout.trim(),
         });
+
+        if (job.permissions?.canPush && greenfield) {
+          const pushResult = await runtime.gitPush({
+            taskId: task.id,
+            branch: "main",
+            cwd: repoCwd,
+          });
+          if (pushResult.status === "completed") {
+            this.emit("git.push", task.id, "Pushed checkpoint to main", {
+              branch: "main",
+              auto: true,
+            });
+          }
+        }
       } catch {
         // ignore transient sandbox/git errors during long agent runs
       }
@@ -685,11 +757,15 @@ export class TaskService {
 
     const interval = setInterval(() => {
       void tick();
-    }, 90_000);
+    }, 60_000);
+    const initial = setTimeout(() => {
+      void tick();
+    }, 45_000);
 
     return () => {
       stopped = true;
       clearInterval(interval);
+      clearTimeout(initial);
     };
   }
 

@@ -1,3 +1,5 @@
+import { pickRandomRepoName } from "./project-metadata.js";
+
 export interface CreatedRepository {
   fullName: string;
   htmlUrl: string;
@@ -114,6 +116,92 @@ export async function createGitHubRepository(
     fullName: repo.full_name,
     htmlUrl: repo.html_url,
     defaultBranch: repo.default_branch ?? "main",
+  };
+}
+
+export function isRepositoryNameTakenError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes('"code":"custom"') &&
+    error.message.includes('"field":"name"') &&
+    error.message.includes("already exists")
+  );
+}
+
+export async function createGitHubRepositoryUnique(
+  token: string,
+  opts?: {
+    description?: string;
+    private?: boolean;
+    preferredName?: string;
+    pickName?: () => string;
+  },
+): Promise<CreatedRepository & { name: string }> {
+  const tried = new Set<string>();
+  const pickName = opts?.pickName ?? pickRandomRepoName;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    let name = opts?.preferredName?.trim();
+    if (!name || tried.has(name)) {
+      do {
+        name = pickName();
+      } while (tried.has(name));
+    }
+    tried.add(name);
+
+    try {
+      const created = await createGitHubRepository(token, name, opts);
+      return { ...created, name };
+    } catch (error) {
+      if (!isRepositoryNameTakenError(error) || attempt === 7) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error("Could not create a uniquely named repository");
+}
+
+export async function fetchRepository(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<{
+  fullName: string;
+  htmlUrl: string;
+  defaultBranch: string;
+} | null> {
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    },
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`GitHub API error ${response.status}: ${body}`);
+  }
+
+  const data = (await response.json()) as {
+    full_name: string;
+    html_url: string;
+    default_branch?: string;
+  };
+
+  return {
+    fullName: data.full_name,
+    htmlUrl: data.html_url,
+    defaultBranch: data.default_branch ?? "main",
   };
 }
 
