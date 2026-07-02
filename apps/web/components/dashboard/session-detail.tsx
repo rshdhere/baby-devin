@@ -317,9 +317,9 @@ function DiagnosticsPanel({
           ) : null}
           {/timed out/i.test(task.message) ? (
             <p className="text-[12px] leading-relaxed text-amber-200/90">
-              The Cursor agent hit a timeout before finishing. After the
-              scheduler image with the latest timeout fix is deployed, tasks can
-              run for up to 30 minutes. Retry the task or simplify the prompt.
+              The Cursor agent hit a timeout before finishing. Redeploy the
+              scheduler image so tasks can run for up to 30 minutes, then retry.
+              Live preview is only built after the agent completes successfully.
             </p>
           ) : null}
         </div>
@@ -715,10 +715,6 @@ function PreviewDeployBanner({
   const taskCompleted = events.some((event) => event.type === "task.completed");
   const taskFailed =
     task.status === "failed" || events.some((e) => e.type === "task.failed");
-  const agentFinished = events.some(
-    (event) =>
-      event.type === "agent.completed" || event.type === "agent.failed",
-  );
   const latestAgentPush = events
     .filter(
       (event) => event.type === "git.push" && event.data?.controlPlane !== true,
@@ -732,11 +728,7 @@ function PreviewDeployBanner({
   const deployPhaseStarted =
     building || deployFailed || Boolean(deployReady) || taskCompleted;
 
-  if (!deployPhaseStarted && !latestAgentPush) {
-    return null;
-  }
-
-  if (!deployPhaseStarted && agentFinished && taskFailed && !previewUrl) {
+  if (taskFailed && !previewUrl) {
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
         <p className="text-[13px] font-medium text-amber-100">
@@ -749,6 +741,10 @@ function PreviewDeployBanner({
         </p>
       </div>
     );
+  }
+
+  if (!deployPhaseStarted && !latestAgentPush) {
+    return null;
   }
 
   if (!deployPhaseStarted) {

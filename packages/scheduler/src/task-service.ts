@@ -396,115 +396,65 @@ export class TaskService {
       }
 
       if (cloneUrl && repository) {
-        await this.ensureSandboxDns(runtime, task.id);
-
-        if (job.greenfieldPushed) {
-          this.emit("git.clone", task.id, `Cloning ${repository} from GitHub`, {
+        try {
+          await this.cloneRepositoryInSandbox(
+            runtime,
+            task.id,
+            cloneUrl,
+            repoCwd,
             repository,
-            fromRemote: true,
-          });
+          );
+        } catch (error) {
+          if (job.draftPlan && isNetworkCloneFailure(error)) {
+            this.emit(
+              "agent.log",
+              task.id,
+              "Git clone failed in sandbox; hydrating from draft scaffold",
+              { repository, fallback: "hydrate" },
+            );
+            await this.hydrateGreenfieldInSandbox(
+              runtime,
+              task,
+              job,
+              repoCwd,
+              gitOwner,
+              cloneUrl,
+              githubToken,
+            );
+          } else {
+            throw error;
+          }
+        }
+        await this.configureSandboxGit(runtime, task.id, gitOwner, {
+          repoCwd,
+          cloneUrl,
+          githubToken,
+        });
+        if (!job.greenfieldPushed && createdNewRepo) {
+          const bot = resolveBotAuthor();
           try {
-            await runtime.gitClone({
+            await bootstrapGreenfieldProject({
+              runtime,
               taskId: task.id,
-              url: cloneUrl,
-              path: repoCwd,
+              repoCwd,
+              prompt: task.prompt,
+              title: task.title ?? "project",
+              botName: bot.name,
+              botEmail: bot.email,
+              canPush: Boolean(job.permissions?.canPush),
+              githubToken,
+              cloneUrl,
+              emit: (type, message, data) =>
+                this.emitRuntime(task.id, type as TaskEventType, message, data),
             });
           } catch (error) {
-            if (job.draftPlan && isNetworkCloneFailure(error)) {
-              this.emit(
-                "agent.log",
-                task.id,
-                "Git clone failed in sandbox; hydrating from draft scaffold",
-                { repository, fallback: "hydrate" },
-              );
-              await this.hydrateGreenfieldInSandbox(
-                runtime,
-                task,
-                job,
-                repoCwd,
-                gitOwner,
-                cloneUrl,
-                githubToken,
-              );
-            } else {
-              throw error;
-            }
-          }
-          await this.configureSandboxGit(runtime, task.id, gitOwner, {
-            repoCwd,
-            cloneUrl,
-            githubToken,
-          });
-        } else {
-          this.emit("git.clone", task.id, `Cloning ${repository}`, {
-            repository,
-          });
-          try {
-            await runtime.gitClone({
-              taskId: task.id,
-              url: cloneUrl,
-              path: repoCwd,
+            const message =
+              error instanceof Error ? error.message : "Bootstrap failed";
+            this.emit("git.commit", task.id, `Bootstrap failed: ${message}`, {
+              error: message,
+              bootstrap: true,
             });
-          } catch (error) {
-            if (job.draftPlan && isNetworkCloneFailure(error)) {
-              this.emit(
-                "agent.log",
-                task.id,
-                "Git clone failed in sandbox; hydrating from draft scaffold",
-                {
-                  repository,
-                  fallback: "hydrate",
-                },
-              );
-              await this.hydrateGreenfieldInSandbox(
-                runtime,
-                task,
-                job,
-                repoCwd,
-                gitOwner,
-                cloneUrl,
-                githubToken,
-              );
-            } else {
-              throw error;
-            }
-          }
-          await this.configureSandboxGit(runtime, task.id, gitOwner, {
-            repoCwd,
-            cloneUrl,
-            githubToken,
-          });
-          if (createdNewRepo && !job.greenfieldPushed) {
-            const bot = resolveBotAuthor();
-            try {
-              await bootstrapGreenfieldProject({
-                runtime,
-                taskId: task.id,
-                repoCwd,
-                prompt: task.prompt,
-                title: task.title ?? "project",
-                botName: bot.name,
-                botEmail: bot.email,
-                canPush: Boolean(job.permissions?.canPush),
-                githubToken,
-                cloneUrl,
-                emit: (type, message, data) =>
-                  this.emitRuntime(
-                    task.id,
-                    type as TaskEventType,
-                    message,
-                    data,
-                  ),
-              });
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : "Bootstrap failed";
-              this.emit("git.commit", task.id, `Bootstrap failed: ${message}`, {
-                error: message,
-                bootstrap: true,
-              });
-              throw error;
-            }
+            throw error;
           }
         }
         agentPrompt = buildAgentPrompt(
@@ -553,6 +503,16 @@ export class TaskService {
           },
           { maxWaitMs: resolveAgentMaxWaitMs() },
         );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Agent run failed";
+        if (/did not finish within/i.test(message)) {
+          this.emit("agent.failed", task.id, message, {
+            timeout: true,
+            maxWaitMs: resolveAgentMaxWaitMs(),
+          });
+        }
+        throw error;
       } finally {
         stopAutoCommit();
         stopEvents();
@@ -810,6 +770,46 @@ export class TaskService {
       command:
         "printf '%s\\n' 'nameserver 8.8.8.8' 'nameserver 1.1.1.1' 'nameserver 8.8.4.4' > /etc/resolv.conf",
     });
+  }
+
+  private async cloneRepositoryInSandbox(
+    runtime: RuntimeClient,
+    taskId: string,
+    cloneUrl: string,
+    repoCwd: string,
+    repository: string,
+  ): Promise<void> {
+    this.emit("git.clone", taskId, `Cloning ${repository} from GitHub`, {
+      repository,
+      fromRemote: true,
+    });
+
+    await this.ensureSandboxDns(runtime, taskId);
+
+    const attemptClone = async (): Promise<void> => {
+      await runtime.gitClone({
+        taskId,
+        url: cloneUrl,
+        path: repoCwd,
+      });
+    };
+
+    try {
+      await attemptClone();
+    } catch (firstError) {
+      if (!isNetworkCloneFailure(firstError)) {
+        throw firstError;
+      }
+      this.emit(
+        "agent.log",
+        taskId,
+        "Git clone failed; refreshing sandbox DNS and retrying",
+        { repository, retry: true },
+      );
+      await this.ensureSandboxDns(runtime, taskId);
+      await sleep(2_000);
+      await attemptClone();
+    }
   }
 
   private async hydrateGreenfieldInSandbox(
@@ -1370,7 +1370,7 @@ export class TaskService {
         secrets[key] = value;
       }
     }
-    const agentTimeout = process.env.AGENT_RUN_TIMEOUT_MIN?.trim() || "45";
+    const agentTimeout = String(resolveAgentTimeoutMinutes());
     secrets.AGENT_RUN_TIMEOUT_MIN = agentTimeout;
     if (githubToken) {
       secrets.GITHUB_TOKEN = githubToken;
@@ -1770,7 +1770,13 @@ function isNetworkCloneFailure(error: unknown): boolean {
     message.includes("could not resolve host") ||
     message.includes("name or service not known") ||
     message.includes("temporary failure in name resolution") ||
-    message.includes("network is unreachable")
+    message.includes("network is unreachable") ||
+    message.includes("connection timed out") ||
+    message.includes("failed to connect") ||
+    message.includes("couldn't connect") ||
+    message.includes("unable to access") ||
+    message.includes("operation timed out") ||
+    message.includes("no route to host")
   );
 }
 
@@ -1778,17 +1784,21 @@ function escapeShell(value: string): string {
   return value.replace(/'/g, `'\"'\"'`);
 }
 
-function resolveAgentMaxWaitMs(): number {
+function resolveAgentTimeoutMinutes(): number {
   const raw = process.env.AGENT_RUN_TIMEOUT_MIN?.trim();
-  const defaultMinutes = 45;
+  const defaultMinutes = 30;
   if (!raw) {
-    return defaultMinutes * 60 * 1000;
+    return defaultMinutes;
   }
   const minutes = Number(raw);
   if (!Number.isFinite(minutes) || minutes <= 0) {
-    return defaultMinutes * 60 * 1000;
+    return defaultMinutes;
   }
-  return minutes * 60 * 1000;
+  return minutes;
+}
+
+function resolveAgentMaxWaitMs(): number {
+  return resolveAgentTimeoutMinutes() * 60 * 1000;
 }
 
 function resolveTimeoutMs(envKey: string, defaultSeconds: number): number {
