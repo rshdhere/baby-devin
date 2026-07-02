@@ -14,7 +14,8 @@ function looksLikeNodeProject(prompt: string): boolean {
     lower.includes("todo") ||
     lower.includes("api") ||
     lower.includes("javascript") ||
-    lower.includes("typescript")
+    lower.includes("typescript") ||
+    lower.includes("app")
   );
 }
 
@@ -26,6 +27,22 @@ function buildCommitMessage(
   return `${subject}\n\nCo-authored-by: ${botName} <${botEmail}>`;
 }
 
+async function repositoryHasCommits(
+  runtime: RuntimeClient,
+  taskId: string,
+  repoCwd: string,
+  env?: Record<string, string>,
+): Promise<boolean> {
+  const result = await runtime.terminal({
+    taskId,
+    cwd: repoCwd,
+    env,
+    command:
+      "git rev-parse --verify HEAD >/dev/null 2>&1 && echo yes || echo no",
+  });
+  return result.stdout.trim() === "yes";
+}
+
 export async function bootstrapGreenfieldProject(opts: {
   runtime: RuntimeClient;
   taskId: string;
@@ -35,41 +52,59 @@ export async function bootstrapGreenfieldProject(opts: {
   botName: string;
   botEmail: string;
   canPush: boolean;
+  githubToken?: string;
+  cloneUrl?: string;
   emit: BootstrapEmitter;
 }): Promise<void> {
-  if (!looksLikeNodeProject(opts.prompt)) {
+  const gitEnv = opts.githubToken
+    ? { GITHUB_TOKEN: opts.githubToken }
+    : undefined;
+
+  if (
+    await repositoryHasCommits(opts.runtime, opts.taskId, opts.repoCwd, gitEnv)
+  ) {
+    opts.emit(
+      "agent.log",
+      "Repository already has commits, skipping bootstrap",
+      {
+        skipped: true,
+      },
+    );
     return;
   }
 
-  opts.emit("agent.log", "Bootstrapping Node.js project scaffold", {
-    stack: "nodejs",
+  opts.emit("agent.log", "Bootstrapping project scaffold", {
+    stack: looksLikeNodeProject(opts.prompt) ? "nodejs" : "minimal",
   });
 
-  const serverJs = `const express = require("express");
+  const readme = `# ${opts.title}
+
+${opts.prompt}
+
+## Getting started
+
+Scaffold created by Devin. The agent will implement the requested functionality next.
+`;
+
+  await opts.runtime.writeFile({
+    path: `${opts.repoCwd}/README.md`,
+    content: readme,
+  });
+  await opts.runtime.writeFile({
+    path: `${opts.repoCwd}/.gitignore`,
+    content: "node_modules/\n.env\n.DS_Store\n",
+  });
+
+  const commitPaths = ["README.md", ".gitignore"];
+
+  if (looksLikeNodeProject(opts.prompt)) {
+    const serverJs = `const express = require("express");
 
 const app = express();
 app.use(express.json());
 
-const todos = [];
-
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
-});
-
-app.post("/signup", (req, res) => {
-  res.status(501).json({ message: "signup not implemented yet", body: req.body });
-});
-
-app.post("/signin", (req, res) => {
-  res.status(501).json({ message: "signin not implemented yet", body: req.body });
-});
-
-app.post("/createTodo", (req, res) => {
-  res.status(501).json({ message: "createTodo not implemented yet", body: req.body });
-});
-
-app.delete("/deleteTodo/:id", (req, res) => {
-  res.status(501).json({ message: "deleteTodo not implemented yet", id: req.params.id });
 });
 
 const port = Number(process.env.PORT || 3000);
@@ -78,43 +113,28 @@ app.listen(port, () => {
 });
 `;
 
-  const readme = `# ${opts.title}
+    await opts.runtime.writeFile({
+      path: `${opts.repoCwd}/server.js`,
+      content: serverJs,
+    });
 
-${opts.prompt}
+    await opts.runtime.terminal({
+      taskId: opts.taskId,
+      cwd: opts.repoCwd,
+      env: gitEnv,
+      command: "npm init -y && npm install express",
+    });
 
-## Getting started
+    await opts.runtime.terminal({
+      taskId: opts.taskId,
+      cwd: opts.repoCwd,
+      env: gitEnv,
+      command:
+        "node -e \"const pkg=require('./package.json'); pkg.main='server.js'; pkg.scripts={start:'node server.js'}; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));\"",
+    });
 
-\`\`\`bash
-npm install
-npm start
-\`\`\`
-`;
-
-  await opts.runtime.terminal({
-    taskId: opts.taskId,
-    cwd: opts.repoCwd,
-    command: "npm init -y && npm install express",
-  });
-
-  await opts.runtime.writeFile({
-    path: `${opts.repoCwd}/server.js`,
-    content: serverJs,
-  });
-  await opts.runtime.writeFile({
-    path: `${opts.repoCwd}/README.md`,
-    content: readme,
-  });
-  await opts.runtime.writeFile({
-    path: `${opts.repoCwd}/.gitignore`,
-    content: "node_modules/\n.env\n",
-  });
-
-  await opts.runtime.terminal({
-    taskId: opts.taskId,
-    cwd: opts.repoCwd,
-    command:
-      "node -e \"const pkg=require('./package.json'); pkg.main='server.js'; pkg.scripts={start:'node server.js'}; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));\"",
-  });
+    commitPaths.push("server.js", "package.json", "package-lock.json");
+  }
 
   const commitMessage = buildCommitMessage(
     `devin: bootstrap ${opts.title}`,
@@ -125,26 +145,42 @@ npm start
   await opts.runtime.gitCommit({
     taskId: opts.taskId,
     cwd: opts.repoCwd,
+    env: gitEnv,
     message: commitMessage,
-    paths: ["."],
+    paths: commitPaths,
   });
 
-  opts.emit("git.commit", "Bootstrapped initial Node.js scaffold", {
+  opts.emit("git.commit", "Bootstrapped initial project scaffold", {
     auto: true,
     bootstrap: true,
   });
 
-  if (opts.canPush) {
-    const pushResult = await opts.runtime.gitPush({
+  if (!opts.canPush) {
+    return;
+  }
+
+  if (opts.cloneUrl && opts.githubToken) {
+    await opts.runtime.terminal({
       taskId: opts.taskId,
       cwd: opts.repoCwd,
-      branch: "main",
+      env: gitEnv,
+      command: [
+        `git remote set-url origin '${opts.cloneUrl.replace(/'/g, `'\"'\"'`)}'`,
+        `printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true`,
+        "gh auth setup-git 2>/dev/null || true",
+      ].join(" && "),
     });
-    if (pushResult.status === "completed") {
-      opts.emit("git.push", "Pushed bootstrap scaffold to main", {
-        branch: "main",
-        bootstrap: true,
-      });
-    }
   }
+
+  await opts.runtime.gitPush({
+    taskId: opts.taskId,
+    cwd: opts.repoCwd,
+    env: gitEnv,
+    branch: "main",
+  });
+
+  opts.emit("git.push", "Pushed bootstrap scaffold to main", {
+    branch: "main",
+    bootstrap: true,
+  });
 }

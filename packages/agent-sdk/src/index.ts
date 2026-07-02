@@ -1,3 +1,5 @@
+import { parseRuntimeResponse } from "./runtime-response.js";
+
 export interface RunRequest {
   taskId: string;
   prompt: string;
@@ -18,6 +20,7 @@ export interface TerminalRequest {
   taskId?: string;
   command: string;
   cwd?: string;
+  env?: Record<string, string>;
 }
 
 export interface TerminalResponse {
@@ -38,6 +41,7 @@ export interface GitCommitRequest {
   message: string;
   paths?: string[];
   cwd?: string;
+  env?: Record<string, string>;
 }
 
 export interface GitPushRequest {
@@ -45,6 +49,7 @@ export interface GitPushRequest {
   remote?: string;
   branch?: string;
   cwd?: string;
+  env?: Record<string, string>;
 }
 
 export interface FileWriteRequest {
@@ -79,6 +84,13 @@ export class RuntimeClient {
 
   private base(path: string): string {
     return `${this.options.baseUrl.replace(/\/$/, "")}${path}`;
+  }
+
+  private envHeaders(env?: Record<string, string>): Record<string, string> {
+    if (!env || Object.keys(env).length === 0) {
+      return {};
+    }
+    return { "X-Runtime-Env": JSON.stringify(env) };
   }
 
   async run(body: RunRequest): Promise<RunResponse> {
@@ -136,7 +148,7 @@ export class RuntimeClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return response.json() as Promise<{ status: string; path: string }>;
+    return parseRuntimeResponse(response);
   }
 
   async health(): Promise<RuntimeHealthResponse> {
@@ -147,10 +159,13 @@ export class RuntimeClient {
   async terminal(body: TerminalRequest): Promise<TerminalResponse> {
     const response = await fetch(this.base("/terminal"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...this.envHeaders(body.env),
+      },
       body: JSON.stringify(body),
     });
-    return response.json() as Promise<TerminalResponse>;
+    return parseRuntimeResponse(response);
   }
 
   async gitClone(
@@ -161,7 +176,7 @@ export class RuntimeClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return response.json() as Promise<{ status: string; path: string }>;
+    return parseRuntimeResponse(response);
   }
 
   async gitCommit(
@@ -169,14 +184,13 @@ export class RuntimeClient {
   ): Promise<{ status: string; message: string; output?: string }> {
     const response = await fetch(this.base("/git/commit"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...this.envHeaders(body.env),
+      },
       body: JSON.stringify(body),
     });
-    return response.json() as Promise<{
-      status: string;
-      message: string;
-      output?: string;
-    }>;
+    return parseRuntimeResponse(response);
   }
 
   async gitPush(
@@ -184,13 +198,12 @@ export class RuntimeClient {
   ): Promise<{ status: string; branch?: string; output?: string }> {
     const response = await fetch(this.base("/git/push"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...this.envHeaders(body.env),
+      },
       body: JSON.stringify(body),
     });
-    return response.json() as Promise<{
-      status: string;
-      branch?: string;
-      output?: string;
-    }>;
+    return parseRuntimeResponse(response);
   }
 }

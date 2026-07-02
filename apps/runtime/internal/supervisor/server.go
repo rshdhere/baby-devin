@@ -138,6 +138,38 @@ func runSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
+func parseRequestEnv(r *http.Request) []string {
+	raw := strings.TrimSpace(r.Header.Get("X-Runtime-Env"))
+	if raw == "" {
+		return nil
+	}
+
+	var envMap map[string]string
+	if err := json.Unmarshal([]byte(raw), &envMap); err != nil {
+		return nil
+	}
+
+	env := make([]string, 0, len(envMap))
+	for key, value := range envMap {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func gitCommitCommand(message string) string {
+	parts := strings.SplitN(message, "\n\n", 2)
+	subject := strings.TrimSpace(parts[0])
+	if len(parts) == 1 || strings.TrimSpace(parts[1]) == "" {
+		return fmt.Sprintf("git commit -m %s", shellQuote(subject))
+	}
+	body := strings.TrimSpace(parts[1])
+	return fmt.Sprintf(
+		"git commit -m %s -m %s",
+		shellQuote(subject),
+		shellQuote(body),
+	)
+}
+
 type terminalRequest struct {
 	TaskID  string `json:"taskId,omitempty"`
 	Command string `json:"command"`
@@ -154,7 +186,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	cwd := s.resolveCWD(req.CWD)
 	s.appendLog("terminal: " + req.Command)
 
-	result, err := executil.Run(r.Context(), cwd, req.Command, nil)
+	result, err := executil.Run(r.Context(), cwd, req.Command, parseRequestEnv(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -241,13 +273,13 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 		addPaths = strings.Join(req.Paths, " ")
 	}
 	command := fmt.Sprintf(
-		"git add %s && git commit -m %s",
+		"git add %s && %s",
 		addPaths,
-		shellQuote(req.Message),
+		gitCommitCommand(req.Message),
 	)
 	s.appendLog("git commit: " + req.Message)
 
-	result, err := executil.Run(r.Context(), cwd, command, nil)
+	result, err := executil.Run(r.Context(), cwd, command, parseRequestEnv(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -293,7 +325,7 @@ func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 	}
 	s.appendLog("git push: " + command)
 
-	result, err := executil.Run(r.Context(), cwd, command, nil)
+	result, err := executil.Run(r.Context(), cwd, command, parseRequestEnv(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -361,21 +361,37 @@ export class TaskService {
             path: repoCwd,
           });
         }
-        await this.configureSandboxGit(runtime, task.id, gitOwner);
+        await this.configureSandboxGit(runtime, task.id, gitOwner, {
+          repoCwd,
+          cloneUrl,
+          githubToken,
+        });
         if (createdNewRepo) {
           const bot = resolveBotAuthor();
-          await bootstrapGreenfieldProject({
-            runtime,
-            taskId: task.id,
-            repoCwd,
-            prompt: task.prompt,
-            title: task.title ?? "project",
-            botName: bot.name,
-            botEmail: bot.email,
-            canPush: Boolean(job.permissions?.canPush),
-            emit: (type, message, data) =>
-              this.emitRuntime(task.id, type as TaskEventType, message, data),
-          });
+          try {
+            await bootstrapGreenfieldProject({
+              runtime,
+              taskId: task.id,
+              repoCwd,
+              prompt: task.prompt,
+              title: task.title ?? "project",
+              botName: bot.name,
+              botEmail: bot.email,
+              canPush: Boolean(job.permissions?.canPush),
+              githubToken,
+              cloneUrl,
+              emit: (type, message, data) =>
+                this.emitRuntime(task.id, type as TaskEventType, message, data),
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Bootstrap failed";
+            this.emit("git.commit", task.id, `Bootstrap failed: ${message}`, {
+              error: message,
+              bootstrap: true,
+            });
+            throw error;
+          }
         }
         agentPrompt = buildAgentPrompt(
           task.prompt,
@@ -384,7 +400,9 @@ export class TaskService {
           gitOwner,
         );
       } else if (githubToken) {
-        await this.configureSandboxGit(runtime, task.id, gitOwner);
+        await this.configureSandboxGit(runtime, task.id, gitOwner, {
+          githubToken,
+        });
       }
 
       const stopAutoCommit =
@@ -396,6 +414,7 @@ export class TaskService {
               repoCwd,
               gitOwner,
               createdNewRepo,
+              githubToken,
             )
           : () => undefined;
 
@@ -432,7 +451,7 @@ export class TaskService {
         }
 
         if (job.permissions) {
-          await this.finalizeGitWork(runtime, task, job, repoCwd, {
+          await this.finalizeGitWork(runtime, task, job, repoCwd, githubToken, {
             greenfield: createdNewRepo,
           });
         }
@@ -546,6 +565,7 @@ export class TaskService {
     task: Task,
     job: ScheduleJob,
     repoCwd: string,
+    githubToken?: string,
     opts?: { greenfield?: boolean },
   ): Promise<void> {
     const permissions = job.permissions;
@@ -553,10 +573,13 @@ export class TaskService {
       return;
     }
 
+    const gitEnv = this.gitRuntimeEnv(githubToken);
+
     const status = await runtime.terminal({
       taskId: task.id,
       command: "git status --porcelain",
       cwd: repoCwd,
+      env: gitEnv,
     });
 
     if (opts?.greenfield) {
@@ -571,6 +594,10 @@ export class TaskService {
           ),
           paths: ["."],
           cwd: repoCwd,
+          env: gitEnv,
+        });
+        this.emit("git.commit", task.id, "Committed final agent changes", {
+          auto: true,
         });
       }
 
@@ -578,10 +605,19 @@ export class TaskService {
         return;
       }
 
+      await this.ensureGitPushAuth(
+        runtime,
+        task.id,
+        repoCwd,
+        githubToken,
+        job.cloneUrl,
+      );
+
       const pushResult = await runtime.gitPush({
         taskId: task.id,
         branch: branchName,
         cwd: repoCwd,
+        env: gitEnv,
       });
 
       if (pushResult.status === "completed") {
@@ -608,6 +644,7 @@ export class TaskService {
         taskId: task.id,
         command: `git checkout -b ${branchName}`,
         cwd: repoCwd,
+        env: gitEnv,
       });
     }
 
@@ -617,6 +654,7 @@ export class TaskService {
         message: buildCommitMessage(`devin: ${task.title ?? "agent changes"}`),
         paths: ["."],
         cwd: repoCwd,
+        env: gitEnv,
       });
     }
 
@@ -624,10 +662,19 @@ export class TaskService {
       return;
     }
 
+    await this.ensureGitPushAuth(
+      runtime,
+      task.id,
+      repoCwd,
+      githubToken,
+      job.cloneUrl,
+    );
+
     const pushResult = await runtime.gitPush({
       taskId: task.id,
       branch: branchName,
       cwd: repoCwd,
+      env: gitEnv,
     });
 
     if (pushResult.status !== "completed") {
@@ -691,16 +738,73 @@ export class TaskService {
   private async configureSandboxGit(
     runtime: RuntimeClient,
     taskId: string,
-    owner?: GitHubUserIdentity,
+    owner: GitHubUserIdentity | undefined,
+    opts?: {
+      repoCwd?: string;
+      cloneUrl?: string;
+      githubToken?: string;
+    },
   ): Promise<void> {
-    if (!owner) {
+    const fallback = resolveBotAuthor();
+    const name = owner?.name || owner?.login || fallback.name;
+    const email =
+      owner?.email || `${owner?.login ?? "devin"}@users.noreply.github.com`;
+
+    const commands = [
+      `git config --global user.name '${escapeShell(name)}'`,
+      `git config --global user.email '${escapeShell(email)}'`,
+    ];
+
+    if (opts?.repoCwd && opts.cloneUrl) {
+      commands.push(
+        `git -C ${opts.repoCwd} remote set-url origin '${escapeShell(opts.cloneUrl)}'`,
+      );
+    }
+
+    if (opts?.githubToken) {
+      commands.push(
+        `printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true`,
+        "gh auth setup-git 2>/dev/null || true",
+      );
+    }
+
+    await runtime.terminal({
+      taskId,
+      env: this.gitRuntimeEnv(opts?.githubToken),
+      command: commands.join(" && "),
+    });
+  }
+
+  private async ensureGitPushAuth(
+    runtime: RuntimeClient,
+    taskId: string,
+    repoCwd: string,
+    githubToken?: string,
+    cloneUrl?: string,
+  ): Promise<void> {
+    if (!githubToken || !cloneUrl) {
       return;
     }
 
     await runtime.terminal({
       taskId,
-      command: `git config --global user.name '${escapeShell(owner.name)}' && git config --global user.email '${escapeShell(owner.email)}'`,
+      cwd: repoCwd,
+      env: this.gitRuntimeEnv(githubToken),
+      command: [
+        `git remote set-url origin '${escapeShell(cloneUrl)}'`,
+        `printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true`,
+        "gh auth setup-git 2>/dev/null || true",
+      ].join(" && "),
     });
+  }
+
+  private gitRuntimeEnv(
+    githubToken?: string,
+  ): Record<string, string> | undefined {
+    if (!githubToken) {
+      return undefined;
+    }
+    return { GITHUB_TOKEN: githubToken };
   }
 
   private startAutoCommitWatcher(
@@ -710,6 +814,7 @@ export class TaskService {
     repoCwd: string,
     gitOwner?: GitHubUserIdentity,
     greenfield = false,
+    githubToken?: string,
   ): () => void {
     if (!job.permissions?.canCommit) {
       return () => undefined;
@@ -723,11 +828,14 @@ export class TaskService {
         return;
       }
 
+      const gitEnv = this.gitRuntimeEnv(githubToken);
+
       try {
         const status = await runtime.terminal({
           taskId: task.id,
           command: "git status --porcelain",
           cwd: repoCwd,
+          env: gitEnv,
         });
         const dirty = status.stdout.trim();
         if (!dirty || dirty === lastDirtyFingerprint) {
@@ -738,6 +846,7 @@ export class TaskService {
           taskId: task.id,
           command: "git diff --stat && git diff --cached --stat",
           cwd: repoCwd,
+          env: gitEnv,
         });
 
         await runtime.gitCommit({
@@ -747,6 +856,7 @@ export class TaskService {
           ),
           paths: ["."],
           cwd: repoCwd,
+          env: gitEnv,
         });
 
         lastDirtyFingerprint = "";
@@ -759,10 +869,18 @@ export class TaskService {
         });
 
         if (job.permissions?.canPush && greenfield) {
+          await this.ensureGitPushAuth(
+            runtime,
+            task.id,
+            repoCwd,
+            githubToken,
+            job.cloneUrl,
+          );
           const pushResult = await runtime.gitPush({
             taskId: task.id,
             branch: "main",
             cwd: repoCwd,
+            env: gitEnv,
           });
           if (pushResult.status === "completed") {
             this.emit("git.push", task.id, "Pushed checkpoint to main", {
@@ -771,8 +889,13 @@ export class TaskService {
             });
           }
         }
-      } catch {
-        // ignore transient sandbox/git errors during long agent runs
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Auto-commit failed";
+        this.emit("git.commit", task.id, `Checkpoint skipped: ${message}`, {
+          auto: true,
+          error: message,
+        });
       }
     };
 

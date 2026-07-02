@@ -382,7 +382,7 @@ function AgentTerminalPanel({
     }
   }, [outputLines.length, isExpanded]);
 
-  if (outputLines.length === 0) {
+  if (outputLines.length === 0 && !isActive) {
     return null;
   }
 
@@ -422,18 +422,33 @@ function AgentTerminalPanel({
           ref={terminalRef}
           className="max-h-[400px] overflow-auto p-3 font-mono text-[12px] leading-relaxed"
         >
-          {outputLines.map((output, index) => (
-            <div
-              key={index}
-              className={cn(
-                "break-all whitespace-pre-wrap",
-                output.stream === "stderr" ? "text-red-400" : "text-green-300",
+          {outputLines.length === 0 ? (
+            <div className="flex items-center gap-2 text-gray-500">
+              {isActive ? (
+                <>
+                  <Loader2 className="size-3 animate-spin" />
+                  <span>Agent is running — output will appear here…</span>
+                </>
+              ) : (
+                <span>No agent output captured for this task.</span>
               )}
-            >
-              {output.line}
             </div>
-          ))}
-          {isActive ? (
+          ) : (
+            outputLines.map((output, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "break-all whitespace-pre-wrap",
+                  output.stream === "stderr"
+                    ? "text-red-400"
+                    : "text-green-300",
+                )}
+              >
+                {output.line}
+              </div>
+            ))
+          )}
+          {isActive && outputLines.length > 0 ? (
             <div className="mt-1 flex items-center gap-1 text-gray-500">
               <Loader2 className="size-3 animate-spin" />
               <span>Waiting for output...</span>
@@ -441,6 +456,74 @@ function AgentTerminalPanel({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function GitHubProgressBanner({
+  repository,
+  events,
+  branch,
+}: {
+  repository?: string;
+  events: TaskEvent[];
+  branch?: string;
+}) {
+  if (!repository) {
+    return null;
+  }
+
+  const commitEvents = events.filter((event) => event.type === "git.commit");
+  const pushEvents = events.filter((event) => event.type === "git.push");
+  const latestPush = pushEvents[pushEvents.length - 1];
+  const failedBootstrap = commitEvents.some(
+    (event) => event.data?.bootstrap && event.data?.error,
+  );
+  const targetBranch = branch ?? "main";
+  const commitsUrl = `https://github.com/${repository}/commits/${targetBranch}`;
+  const repoUrl = `https://github.com/${repository}`;
+
+  return (
+    <div className="mb-4 rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-gray-200">
+            GitHub: {repository}
+          </p>
+          <p className="mt-0.5 text-[12px] text-gray-500">
+            {latestPush
+              ? `Pushed to ${targetBranch} — commits should be visible on GitHub`
+              : commitEvents.length > 0
+                ? `${commitEvents.length} commit(s) recorded — waiting for push`
+                : "Waiting for initial commit and push…"}
+          </p>
+          {failedBootstrap ? (
+            <p className="mt-1 text-[12px] text-red-400">
+              Bootstrap failed — check activity log for details
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <a
+            href={repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-1.5 text-[12px] text-[#5a9fd4] transition-colors hover:bg-[#222]"
+          >
+            Open repo
+            <ExternalLink className="size-3" />
+          </a>
+          <a
+            href={commitsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-1.5 text-[12px] text-emerald-400 transition-colors hover:bg-[#222]"
+          >
+            View commits
+            <GitCommit className="size-3" />
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
@@ -490,6 +573,11 @@ function EventRow({ event }: { event: TaskEvent }) {
               >
                 {isRepoCreated ? "Open repo" : "View"}
               </a>
+            ) : null}
+            {event.type === "git.push" && event.data?.branch ? (
+              <span className="text-emerald-400/80">
+                branch {String(event.data.branch)}
+              </span>
             ) : null}
             {hasDetails ? (
               <button
@@ -711,6 +799,16 @@ export function SessionDetail({
             View PR
             <ExternalLink className="size-3" />
           </a>
+        ) : task.repository ? (
+          <a
+            href={`https://github.com/${task.repository}/commits/${task.branch ?? "main"}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-1.5 text-[12px] text-emerald-400 transition-colors hover:bg-[#222]"
+          >
+            View commits
+            <GitCommit className="size-3" />
+          </a>
         ) : null}
       </div>
 
@@ -733,6 +831,14 @@ export function SessionDetail({
             </p>
           </div>
         </div>
+      ) : null}
+
+      {task.repository ? (
+        <GitHubProgressBanner
+          repository={task.repository}
+          events={events}
+          branch={task.branch}
+        />
       ) : null}
 
       <AgentTerminalPanel events={events} isActive={isActive} />
