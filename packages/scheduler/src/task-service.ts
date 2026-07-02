@@ -392,44 +392,88 @@ export class TaskService {
       }
 
       if (cloneUrl && repository) {
-        this.emit("git.clone", task.id, `Cloning ${repository}`, {
-          repository,
-        });
-        await runtime.gitClone({
-          taskId: task.id,
-          url: cloneUrl,
-          path: repoCwd,
-        });
-        await this.configureSandboxGit(runtime, task.id, gitOwner, {
-          repoCwd,
-          cloneUrl,
-          githubToken,
-        });
-        if (createdNewRepo && !job.greenfieldPushed) {
-          const bot = resolveBotAuthor();
+        await this.ensureSandboxDns(runtime, task.id);
+
+        if (job.greenfieldPushed && job.draftPlan) {
+          await this.hydrateGreenfieldInSandbox(
+            runtime,
+            task,
+            job,
+            repoCwd,
+            gitOwner,
+            cloneUrl,
+            githubToken,
+          );
+        } else {
+          this.emit("git.clone", task.id, `Cloning ${repository}`, {
+            repository,
+          });
           try {
-            await bootstrapGreenfieldProject({
-              runtime,
+            await runtime.gitClone({
               taskId: task.id,
-              repoCwd,
-              prompt: task.prompt,
-              title: task.title ?? "project",
-              botName: bot.name,
-              botEmail: bot.email,
-              canPush: Boolean(job.permissions?.canPush),
-              githubToken,
-              cloneUrl,
-              emit: (type, message, data) =>
-                this.emitRuntime(task.id, type as TaskEventType, message, data),
+              url: cloneUrl,
+              path: repoCwd,
             });
           } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "Bootstrap failed";
-            this.emit("git.commit", task.id, `Bootstrap failed: ${message}`, {
-              error: message,
-              bootstrap: true,
-            });
-            throw error;
+            if (job.draftPlan && isNetworkCloneFailure(error)) {
+              this.emit(
+                "agent.log",
+                task.id,
+                "Git clone failed in sandbox; hydrating from draft scaffold",
+                {
+                  repository,
+                  fallback: "hydrate",
+                },
+              );
+              await this.hydrateGreenfieldInSandbox(
+                runtime,
+                task,
+                job,
+                repoCwd,
+                gitOwner,
+                cloneUrl,
+                githubToken,
+              );
+            } else {
+              throw error;
+            }
+          }
+          await this.configureSandboxGit(runtime, task.id, gitOwner, {
+            repoCwd,
+            cloneUrl,
+            githubToken,
+          });
+          if (createdNewRepo && !job.greenfieldPushed) {
+            const bot = resolveBotAuthor();
+            try {
+              await bootstrapGreenfieldProject({
+                runtime,
+                taskId: task.id,
+                repoCwd,
+                prompt: task.prompt,
+                title: task.title ?? "project",
+                botName: bot.name,
+                botEmail: bot.email,
+                canPush: Boolean(job.permissions?.canPush),
+                githubToken,
+                cloneUrl,
+                emit: (type, message, data) =>
+                  this.emitRuntime(
+                    task.id,
+                    type as TaskEventType,
+                    message,
+                    data,
+                  ),
+              });
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Bootstrap failed";
+              this.emit("git.commit", task.id, `Bootstrap failed: ${message}`, {
+                error: message,
+                bootstrap: true,
+              });
+              throw error;
+            }
           }
         }
         agentPrompt = buildAgentPrompt(
@@ -701,6 +745,83 @@ export class TaskService {
       phase: "draft_ready",
       repository,
       scaffoldPushed: true,
+    });
+  }
+
+  private async ensureSandboxDns(
+    runtime: RuntimeClient,
+    taskId: string,
+  ): Promise<void> {
+    await runtime.terminal({
+      taskId,
+      command:
+        "printf '%s\\n' 'nameserver 8.8.8.8' 'nameserver 1.1.1.1' 'nameserver 8.8.4.4' > /etc/resolv.conf",
+    });
+  }
+
+  private async hydrateGreenfieldInSandbox(
+    runtime: RuntimeClient,
+    task: Task,
+    job: ScheduleJob,
+    repoCwd: string,
+    gitOwner: GitHubUserIdentity | undefined,
+    cloneUrl: string,
+    githubToken?: string,
+  ): Promise<void> {
+    const plan = job.draftPlan;
+    if (!plan) {
+      throw new Error("missing draft plan for greenfield hydration");
+    }
+
+    const scaffoldFiles = scaffoldFilesFromDraft(plan, {
+      title: task.title ?? "project",
+      prompt: task.prompt,
+    });
+
+    this.emit("git.clone", task.id, `Hydrating ${task.repository} in sandbox`, {
+      repository: task.repository,
+      hydrated: true,
+      files: scaffoldFiles.map((file) => file.path),
+    });
+
+    const gitEnv = this.gitRuntimeEnv(githubToken);
+
+    for (const file of scaffoldFiles) {
+      const fullPath = `${repoCwd}/${file.path}`;
+      const parentDir = fullPath.includes("/")
+        ? fullPath.slice(0, fullPath.lastIndexOf("/"))
+        : repoCwd;
+      if (parentDir !== repoCwd) {
+        await runtime.terminal({
+          taskId: task.id,
+          command: `mkdir -p '${escapeShell(parentDir)}'`,
+        });
+      }
+      await runtime.writeFile({
+        path: fullPath,
+        content: file.content,
+      });
+    }
+
+    await runtime.terminal({
+      taskId: task.id,
+      cwd: repoCwd,
+      env: gitEnv,
+      command: `git init -b main && git remote add origin '${escapeShell(cloneUrl)}'`,
+    });
+
+    await runtime.gitCommit({
+      taskId: task.id,
+      cwd: repoCwd,
+      env: gitEnv,
+      message: buildCommitMessage(`devin: scaffold ${task.title ?? "project"}`),
+      paths: ["."],
+    });
+
+    await this.configureSandboxGit(runtime, task.id, gitOwner, {
+      repoCwd,
+      cloneUrl,
+      githubToken,
     });
   }
 
@@ -1553,6 +1674,16 @@ function buildAgentPrompt(
     "",
     prompt,
   ].join("\n");
+}
+
+function isNetworkCloneFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("could not resolve host") ||
+    message.includes("name or service not known") ||
+    message.includes("temporary failure in name resolution") ||
+    message.includes("network is unreachable")
+  );
 }
 
 function escapeShell(value: string): string {

@@ -19,6 +19,7 @@ func main() {
 		slog.Error("failed to prepare workspace", "error", err)
 		os.Exit(1)
 	}
+	workspace.EnsureDNS()
 
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(port),
