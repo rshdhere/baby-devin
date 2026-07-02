@@ -19,6 +19,7 @@ import {
   Terminal,
   XCircle,
 } from "lucide-react";
+import { MotionButton } from "@/components/dashboard/motion-button";
 import { DEVIN_BOT } from "@/lib/devin-bot";
 import { useSessions } from "@/components/dashboard/sessions-context";
 import {
