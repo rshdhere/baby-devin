@@ -8,7 +8,7 @@ function readErrorBody(body: unknown): string {
   return "Runtime request failed";
 }
 
-async function parseRuntimeResponse<T>(response: Response): Promise<T> {
+export async function parseRuntimeResponse<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as T & {
     error?: string;
     status?: string;
